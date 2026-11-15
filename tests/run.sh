@@ -8,7 +8,7 @@
 # Assertions only use what a user can see: exit codes, printed lines, files on disk and the fake hcloud's call log.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/cloudmule-test.XXXXXX")"
+WORK="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/cloudmule-test.XXXXXX")" && pwd)"   # canonical path (macOS TMPDIR ends in /)
 trap 'rm -rf "$WORK"' EXIT
 PASSES=0; FAILS=0; SKIPS=0
 pass() { PASSES=$((PASSES + 1)); echo "PASS  $*"; }
