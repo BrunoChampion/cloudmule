@@ -11,7 +11,7 @@
       "name": "cloudmule",
       "source": "./plugin",
       "description": "Skill that runs dependency installs, builds, tests, dev servers, browsers and renders on a rented Hetzner server instead of your computer, and sets projects up for it.",
-      "version": "0.1.1"
+      "version": "0.1.2"
     }
   ]
 }

@@ -97,6 +97,8 @@ cloudmule status                  # what exists and bills right now
 - **A project's `.cloudmule/`** holds only commands and settings; cloudmule refuses to run if it finds files
   that look like secrets there.
 - cloudmule only talks to Hetzner through the official `hcloud` CLI.
+- No backend and no telemetry: nothing is sent to the author or anyone but Hetzner. Full details in
+  [PRIVACY.md](PRIVACY.md).
 
 ## Uninstall
 

@@ -1,10 +1,19 @@
 {
   "name": "cloudmule",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Run dependency installs, builds, tests, dev servers, browsers and renders on a Hetzner server rented by the hour instead of your computer.",
   "author": {
     "name": "Bruno Champion (NYVEX)"
   },
+  "homepage": "https://github.com/BrunoChampion/cloudmule",
+  "repository": "https://github.com/BrunoChampion/cloudmule",
   "license": "MIT",
-  "keywords": ["hetzner", "remote", "build", "tests", "ram", "offload"]
+  "keywords": [
+    "hetzner",
+    "remote",
+    "build",
+    "tests",
+    "ram",
+    "offload"
+  ]
 }
