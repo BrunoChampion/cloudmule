@@ -3,7 +3,11 @@
 set -euo pipefail
 
 CM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# settings given in the environment win over .env (e.g. IDLE_MINUTES=10 cloudmule start …)
+CM_SETTINGS='SERVER_TYPES|LOCATIONS|IDLE_MINUTES|SESSION_MAX_HOURS|ONESHOT_IDLE_MINUTES|ONESHOT_MAX_HOURS|BASE_IMAGE|SERVER_NAME'
+CM_FROM_ENV="$(env | grep -E "^($CM_SETTINGS)=" || true)"
 if [ -f "$CM_DIR/.env" ]; then set -a; . "$CM_DIR/.env"; set +a; fi
+while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$CM_FROM_ENV"
 if [ -z "${HCLOUD_TOKEN:-}" ] && [ -z "${CM_NO_TOKEN:-}" ]; then   # init/projects/help work without a token
   echo "ERROR: HCLOUD_TOKEN is missing in $CM_DIR/.env (copy .env.example to .env and paste your token there)" >&2
   exit 1
@@ -231,7 +235,12 @@ prune_images() {   # keep only the newest snapshot matching the selector
 # ---------------------------------------------------------------- leases (who is using the shared server)
 # A lease = "this project/target is using the server". Every command of a project refreshes its lease (the file's
 # mtime), so a lease untouched for long with no job running is probably stale (its session ended without `end`).
-lease_add() { rsh "mkdir -p $R/leases && echo '$PROJECT ${TARGET:-} $(hostname) $(date -u +%FT%TZ)' > $R/leases/$LEASE"; }
+# lease_add also tells the cost guard "in use now": it only looks every 5 minutes, and short commands between
+# two looks would otherwise not count as activity.
+lease_add() {
+  rsh "mkdir -p $R/leases && echo '$PROJECT ${TARGET:-} $(hostname) $(date -u +%FT%TZ)' > $R/leases/$LEASE \
+       && { [ ! -d /run/cloudmule ] || date +%s > /run/cloudmule/last_active; }"
+}
 lease_drop() { rsh "rm -f $R/leases/$LEASE" 2>/dev/null || true; }
 leases() { rsh "ls $R/leases 2>/dev/null" 2>/dev/null || true; }
 # leases_report: one line per lease: name, minutes since last use, and jobs of that project running now
@@ -310,6 +319,7 @@ remote_wait() {
     sleep 20
   done
   LAST_LOG="$CM_DIR/logs/$name-$(date +%Y%m%d-%H%M).log"
+  rsh "[ ! -d /run/cloudmule ] || date +%s > /run/cloudmule/last_active" 2>/dev/null || true   # a job just ended: in use
   rsh "cat $log" 2>/dev/null | tr '\r' '\n' | grep -v '^[[:space:]]*$' > "$LAST_LOG" || true
   if [ "$last" != "EXIT 0" ]; then
     echo "ERROR: '$name' failed ($last). Log: $LAST_LOG" >&2

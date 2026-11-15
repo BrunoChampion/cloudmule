@@ -130,6 +130,8 @@ check "an unknown location is refused" has "is not in LOCATIONS"
 printf 'SERVER_TYPES="ccx63 cpx62"\n' >> "$VID/.cloudmule/config.sh"
 run start videos --dry-run
 check "the project's SERVER_TYPES overrides .env's" has "WOULD_CREATE: ccx63 hel1"
+OUT="$(SERVER_TYPES="ccx43 cpx62" cm start my-app --fresh --dry-run)"
+check "a setting in the environment wins over .env" has "WOULD_CREATE: ccx43 hel1"
 OUT="$(FAKE_HC_SCENARIO=available cm start my-app --fresh --dry-run)"
 check "when everything is available, the first preference that fits is used" has "WOULD_CREATE: cx53"
 OUT="$(FAKE_HC_SCENARIO=running cm start videos --dry-run)"
@@ -138,7 +140,17 @@ check "a running server below the project's needs is reported" has "SERVER_BELOW
 check "joining needs no choice" has "WOULD_JOIN: cloudmule"
 OUT="$(FAKE_HC_SCENARIO=running cm start videos --fresh --dry-run)"
 check "--fresh is refused while the server is running" has "--fresh needs the server to be off"
-check "no test ever asked Hetzner to create a server" bash -c "! grep -q '^server create' '$FAKE_HC_LOG'"
+echo "== end --keep (the server cannot be reached: the save must still happen through the API)"
+: > "$WORK/before.log"; cp "$FAKE_HC_LOG" "$WORK/before.log"
+OUT="$(FAKE_HC_SCENARIO=running cm end videos --keep)"
+NEW="$(tail -n +"$(( $(wc -l < "$WORK/before.log") + 1 ))" "$FAKE_HC_LOG")"
+calls() { printf '%s\n' "$NEW" | grep -E "$1" >/dev/null; }
+check "end --keep snapshots the server with cloudmule's labels" \
+  calls '^server create-image --type snapshot .*--label managed-by=cloudmule --label role=workspace --label scope=shared cloudmule$'
+check "end --keep keeps only the newest workspace snapshot" calls '^image delete 1000001$'
+check "end --keep does not delete the newest snapshot" bash -c "! printf '%s\n' \"\$1\" | grep -q '^image delete 1000002'" _ "$NEW"
+check "end --keep deletes the server" calls '^server delete cloudmule$'
+check "no test ever asked Hetzner to create a server" bash -c "! grep -q '^server create ' '$FAKE_HC_LOG'"
 check "every Hetzner call was one the fake knows" bash -c "! grep -q '^UNHANDLED' '$FAKE_HC_LOG'"
 
 echo

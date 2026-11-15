@@ -115,20 +115,24 @@ cloudmule creates carries the label `managed-by=cloudmule`.
 refreshed by every command), `jobs/<lease>-<job>.log`, `scripts/`, `mod/<module>[@<version>]` (installed
 modules) and `setup/<project>-<hash>` (server-setup done). Project files live in `/root/work/<project>/`.
 
-**On this computer:** `.env` (token and settings), `keys/` (this computer's SSH key), `registry/<project>`
+**On this computer:** `.env` (token and settings; a setting given in the environment wins, e.g.
+`IDLE_MINUTES=10 cloudmule start …`), `keys/` (this computer's SSH key), `registry/<project>`
 (each project's folder), `logs/` (every job's log). None of it is versioned.
 
 **Server type:** the user chooses it. `servers` reads the API's server types (`server-type list`: cores, memory,
 disk, `cpu_type`, `architecture`, `prices[]`, `locations[].available`) and checks each against the project's
 requirements and the saved workspace. `start --type` creates exactly that type, in the cheapest allowed location
 (or `--location`). Without `--type`, `SERVER_TYPES` is tried in order, keeping only types that fit.
-**A snapshot restores only on a disk at least as large as the disk it was taken from**, so the size of the
+**A snapshot restores only on a disk at least as large as the disk it was taken from** (Hetzner answers
+"image disk is bigger than server type disk"; verified 2026-11-14), so the size of the
 first server limits later choices; `--fresh` starts from plain Ubuntu, and the next `end --keep` replaces the
 saved workspace. Shared CPUs (CX, CPX) are cheaper; dedicated (CCX) give full cores for long CPU-bound work.
 
 **Cost guard, on the server:** a systemd timer runs `remote/guard.py` every 5 min and deletes the server after
 `IDLE_MINUTES` without activity (session 45, oneshot 20) or `SESSION_MAX_HOURS`/`ONESHOT_MAX_HOURS` up (8 / 3).
-In a session it snapshots first: nothing is lost. Activity = an SSH connection or a job's process. It works even
+In a session it snapshots first: nothing is lost. Activity = an SSH connection or a job's process at one of
+its 5-minute looks, and every cloudmule command (it marks the server as used, so short commands between two
+looks still count). It works even
 if Claude Code is closed or the computer is off. `oneshot` also deletes the server with `trap … EXIT`.
 
 **Remote jobs** run detached from SSH (`{ nohup setsid -f bash -c … & }`), with their log copied to `logs/`. If

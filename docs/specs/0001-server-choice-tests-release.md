@@ -1,6 +1,6 @@
 # Spec 0001 — Server choice, automated tests and first public release
 
-Status: ready for implementation · Written 2026-11-14 · Scope: the cloudmule repository only.
+Status: implemented in v0.1.0 (2026-11-15) · Written 2026-11-14 · Scope: the cloudmule repository only.
 
 ## Problem Statement
 
@@ -136,8 +136,8 @@ yet, and the README still says `<owner>`.
   (`# arch: x86 arm`). The project's required architectures = intersection over its `MODULES` plus `base`.
   Today: `base`, `node`, `chrome-libs`, `python` support x86 and arm; `ffmpeg` (BtbN `linux64` asset) is x86 only.
 - Effective disk requirement = max(`MIN_DISK_GB`, workspace snapshot `disk_size` when restoring). The snapshot
-  rule (a snapshot restores only on a disk ≥ its source disk) must be verified once against the real API when
-  implementing; if Hetzner allows smaller disks, drop that reason.
+  rule (a snapshot restores only on a disk ≥ its source disk) was verified against the real API on 2026-11-14:
+  creating a CX23 from a 640 GB snapshot is rejected with "image disk is bigger than server type disk".
 - The workspace snapshot's architecture also constrains restores (an x86 snapshot cannot boot on arm).
 
 ### `start` changes
@@ -251,3 +251,13 @@ State when this spec was written (2026-11-14), so the work can resume after any 
   confirmation) → GitHub Actions.
 - The project issue tracker is not configured (no GitHub remote yet), so this spec lives in the repository; it
   can be published as an issue once the repository is on GitHub.
+
+## Outcome (2026-11-15)
+
+Implemented as specified and released as v0.1.0 (public repository, tests green on Linux and macOS). The manual
+end-to-end run on a real CPX62 passed: server menu, the snapshot disk rule (confirmed by the API), workspace
+restore, modules with the new layout (`node@24.15.0` under `/opt/node`), a real job downloading its
+`CLOUDMULE_RESULT`s, a second `start` installing nothing, and the cost guard snapshotting and deleting the
+server. Two improvements came out of it: settings given in the environment now win over `.env`, and every
+command marks the server as used so the guard no longer misses activity between its 5-minute looks. `end --keep`
+(snapshot labels, keeping only the newest workspace snapshot, deleting the server) is covered by the test suite.

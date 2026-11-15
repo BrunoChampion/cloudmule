@@ -6,7 +6,8 @@
 # FAKE_HC_SCENARIO:
 #   workspace    (default) no server running; a saved workspace snapshot taken from a 640 GB x86 disk
 #   empty        no server running, no snapshot
-#   running      the shared server is running as a cpx22 (2 vCPU / 4 GB / 80 GB); workspace as above
+#   running      the shared server is running as a cpx22 (2 vCPU / 4 GB / 80 GB) at an unreachable test address;
+#                two saved workspace snapshots (1000001 older, 1000002 newer)
 #   available    like empty, but every server type is available everywhere
 # FAKE_HC_KEY_FP: if set, the SSH key "cloudmule-<host>" exists in Hetzner with this MD5 fingerprint.
 set -euo pipefail
@@ -30,11 +31,16 @@ case "$*" in
     f="$(types_file)"; if command -v cygpath >/dev/null 2>&1; then f="$(cygpath -w "$f")"; fi
     "$PY" -I -c 'import json,sys; print(json.dumps(next(t for t in json.load(open(sys.argv[1])) if t["name"] == sys.argv[2])))' \
       "$f" "$3" ;;
-  "image list "*"role=workspace"*)      if has_workspace; then echo 1000001; fi ;;
+  "image list "*"role=workspace"*)      if has_workspace; then echo 1000001; fi
+                                        if running; then echo 1000002; fi ;;   # running: two saved workspaces
   "image list "*)
     echo "ID          DESCRIPTION                         IMAGE SIZE   CREATED"
     if has_workspace; then echo "1000001   cloudmule workspace (test fixture)  27.50 GB     2026-11-14 08:05:02 -05"; fi ;;
-  "image describe 1000001 -o json")   cat "$FIX/image-workspace.json" ;;
+  "image describe 100000"[12]" -o json") cat "$FIX/image-workspace.json" ;;
+  "image delete "*)                     echo "Image deleted" ;;
+  "server shutdown "*|"server poweroff "*) echo "Server stopped" ;;
+  "server create-image "*)              echo "Image created" ;;
+  "server delete cloudmule")            echo "Server deleted" ;;
   "ssh-key list "*)                     echo cloudmule-test ;;
   "ssh-key describe "*" -o json")       [ -n "${FAKE_HC_KEY_FP:-}" ] && printf '{"fingerprint": "%s"}\n' "$FAKE_HC_KEY_FP" || exit 1 ;;
   "ssh-key describe "*)                 [ -n "${FAKE_HC_KEY_FP:-}" ] || { echo "hcloud: ssh key not found" >&2; exit 1; } ;;
