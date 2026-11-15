@@ -1,0 +1,45 @@
+# cloudmule settings for this project. Sourced by bash: keep it to assignments (and simple shell).
+# NEVER put secrets here: this folder may be committed with your project, even to a public repository.
+# The Hetzner token lives only in cloudmule's own .env; the project's secrets stay where the project keeps them.
+
+PROJECT_NAME=my-project   # lowercase letters, digits and dashes (set by `cloudmule init`)
+
+# One sub-folder per piece of work (e.g. one folder per video)? Then every command takes a [target] after the
+# project name, available below as $TARGET.
+NEEDS_TARGET=0
+# TARGET_EXAMPLE=video-01
+
+# What gets uploaded: the project folder ($PROJECT_ROOT) by default. With targets, e.g. "$PROJECT_ROOT/$TARGET".
+LOCAL_DIR="$PROJECT_ROOT"
+# Where it lives on the server: always under /root/work/<project>/ (the server is shared by all your projects).
+REMOTE_DIR="/root/work/$PROJECT_NAME"
+
+# What the server must have installed for this project (cloudmule/remote/modules/). Versioned modules take
+# @<version>; several versions live side by side, so projects with different versions don't clash.
+#   node@<version>  Node.js + corepack (pnpm, yarn). Use the project's version (.nvmrc, engines, `node --version`).
+#   chrome-libs     system libraries for headless Chrome (Playwright, Puppeteer…; the browser comes from the tool)
+#   ffmpeg          ffmpeg + ffprobe 8.1 (static build)
+#   python          Python 3 venv + numpy
+# Anything else (a JDK, Android SDK, a CLI…): write it in server-setup.sh (start from server-setup.sh.example).
+MODULES="node@24.15.0"
+
+# The server this project needs: `cloudmule servers` only recommends types that meet these, and `start` refuses
+# a type that doesn't. Defaults: 4 GB RAM, 2 vCPU, 40 GB disk. Write the reason next to each value you set.
+# MIN_RAM_GB=8      # e.g. "the test suite runs 4 browsers in parallel"
+# MIN_CPUS=4
+# MIN_DISK_GB=80
+# Preferred server types for this project, in order (overrides cloudmule's .env), e.g. "cpx42 ccx23".
+# SERVER_TYPES="cpx42 ccx23"
+
+# Never uploaded (space-separated). Without "/" = any file or folder with that name; with "/" = that exact path.
+SYNC_EXCLUDE="node_modules .git .env .env.* dist build .next .expo __pycache__ .venv *.log"
+# Heavy files the SERVER generates: uploaded only if missing there, never overwritten (unless --with-generated).
+SYNC_SEEDS=""
+# Extra excludes only for `cloudmule oneshot` (e.g. raw material a single job does not need).
+ONESHOT_EXCLUDE=""
+
+# Dependencies on the server: INSTALL_CMD runs when a trigger file changed or INSTALL_CHECK fails.
+# Use the project's own package manager and lockfile.
+INSTALL_CMD="pnpm install --frozen-lockfile"
+INSTALL_TRIGGERS="package.json pnpm-lock.yaml pnpm-workspace.yaml"
+INSTALL_CHECK="test -d node_modules"

@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+# cloudmule — run the heavy work of your projects on ONE rented Hetzner server, by the hour; keep your computer
+# for editing.
+#
+#   cloudmule setup                                 once per computer: check token and prices, create + register
+#                                                   this computer's SSH key, install the Claude Code plugin
+#   cloudmule init [folder] [--name n] [--local]    set up a project (creates <folder>/.cloudmule/) or register an
+#                                                   already set-up one on this computer. --local: keep .cloudmule/
+#                                                   out of git (local exclude) instead of noting it in CLAUDE.md
+#   cloudmule projects                              projects registered on this computer
+#   cloudmule servers [project] [target] [--fresh]  the server types you can rent now, whether each fits the
+#                                                   project and why not, prices; ends with RECOMMENDED (no cost)
+#   cloudmule start   <project> [target] [--type t] [--location l] [--fresh] [--dry-run]
+#                                                   join the server, or create it (--type: the one the user chose;
+#                                                   --fresh: ignore the saved workspace; --dry-run: only show what it
+#                                                   would create); install what the project needs, run its setup,
+#                                                   sync, install deps, take a lease
+#   cloudmule sync    <project> [target] [--with-generated]   upload only what changed
+#   cloudmule job     <project> [target] <job> [args…]  sync, run .cloudmule/jobs/<job>.sh on the server, download
+#                                                   its results
+#   cloudmule attach  <project> [target] <job>      re-attach to a job still running on the server, then download
+#   cloudmule pull    <project> [target] <path>…    download files/folders (relative to the project folder)
+#   cloudmule run     <project> [target] ['cmd']    run a command in the remote project folder, or open a shell
+#   cloudmule tunnel  <project> [target] <port>     forward localhost:<port> here to 127.0.0.1:<port> on the server
+#   cloudmule end     <project> [target] [--keep] [--forget] [--force]
+#                                                   release this project's lease; if NO other project holds one,
+#                                                   delete the server (--keep: snapshot it first). --forget: delete
+#                                                   this project's folder on the server. --force: delete even with
+#                                                   other leases
+#   cloudmule oneshot <project> [target] <job> [args…]  one job; creates the server only if it is off and deletes
+#                                                   it at the end if nobody else is using it
+#   cloudmule leases                                who is using the server (and for how long, running jobs)
+#   cloudmule status                                what exists and therefore bills: server, leases, snapshots
+#
+# [target] is only for projects with NEEDS_TARGET=1 (one sub-folder per piece of work, e.g. per video).
+case "${1:-help}" in init|projects|help|-h|--help) export CM_NO_TOKEN=1 ;; esac
+. "$(dirname "$0")/lib.sh"
+
+CMD="${1:-help}"; shift || true
+
+# take_project <args…>: sets PROJECT/TARGET (+ project config) and leaves the remaining args in REST
+take_project() {
+  local name="${1:-}"; shift || true
+  [ -n "$name" ] || die "missing project name. Projects on this computer: $(project_names)"
+  if project_paths "$name" && grep -qE '^NEEDS_TARGET=1' "$PROJECT_DIR/config.sh" 2>/dev/null; then
+    load_project "$name" "${1:-}"; shift || true
+  else
+    load_project "$name"
+  fi
+  REST=("$@")
+}
+
+CHOSEN_TYPE=""; CHOSEN_LOCATION=""; FRESH=0; DRY_RUN=0   # set by start's options
+
+# server_report: the running server's type; SERVER_BELOW_REQUIREMENTS if it is below this project's needs (not
+# refused: other projects may be using it, and it cannot change size meanwhile)
+server_report() {
+  local json below
+  json="$(hc server describe "$SERVER" -o json)"
+  echo "The server $SERVER is already running ($IP, $(printf '%s' "$json" | tools server-type)): joining it."
+  [ -n "${PROJECT:-}" ] || return 0
+  WS_DISK=""; WS_ARCH=""; reqs_args
+  below="$(printf '%s' "$json" | tools below "${REQS[@]}")"
+  [ -z "$below" ] || echo "SERVER_BELOW_REQUIREMENTS: $below (it is shared: it cannot change size while other projects use it)"
+}
+
+# up_server <mode>: join the shared server, or create it (type from CHOSEN_TYPE or SERVER_TYPES, filtered by what
+# fits the project and the saved workspace). Sets IP and CREATED. With DRY_RUN=1 it only says what it would do.
+up_server() {
+  CREATED=0
+  local img t loc eur
+  if server_exists "$SERVER"; then
+    [ "$FRESH" = 1 ] && die "--fresh needs the server to be off, but $SERVER is running"
+    IP="$(hc server ip "$SERVER")"
+    server_report
+    [ -z "$CHOSEN_TYPE" ] || echo "(--type $CHOSEN_TYPE ignored: joining the running server)"
+    [ "$DRY_RUN" = 1 ] && { echo "WOULD_JOIN: $SERVER"; exit 0; }
+    return 0
+  fi
+  if [ "$FRESH" = 1 ]; then workspace_info --fresh; else workspace_info; fi
+  img="${WS_IMAGE:-$BASE_IMAGE}"
+  choose_candidates
+  read -r t loc eur <<< "$(printf '%s\n' "$CANDS" | head -1)"
+  if [ "$DRY_RUN" = 1 ]; then echo "WOULD_CREATE: $t $loc $img $eur"; exit 0; fi
+  if [ -n "$WS_IMAGE" ]; then
+    echo "Restoring the shared workspace (snapshot $WS_IMAGE, needs a disk >= $WS_DISK GB)."
+  elif [ "$FRESH" = 1 ] && [ -n "$(latest_image "$WORKSPACE_SEL")" ]; then
+    echo "WARNING (--fresh): starting from $BASE_IMAGE without the saved workspace. The next 'end --keep' REPLACES"
+    echo "the saved workspace (only one is kept), so every project uploads and installs again on this server."
+  else
+    echo "No workspace snapshot yet: starting from $BASE_IMAGE (the first start installs everything)."
+    echo "Note: later restores of this server's snapshot need a disk at least as large as this one's."
+  fi
+  create_server "$SERVER" "$CANDS" "$img" "mode=$1" scope=shared
+  wait_ssh || { delete_server "$SERVER"; exit 1; }
+  CREATED=1
+  if [ "$1" = session ]; then arm_guard session "$IDLE_MINUTES" "$SESSION_MAX_HOURS"
+  else arm_guard oneshot "$ONESHOT_IDLE_MINUTES" "$ONESHOT_MAX_HOURS"; fi
+}
+
+prepare_project() {   # everything a project needs on the server before running jobs
+  lease_add
+  ensure_modules
+  server_setup
+  echo "== Syncing $PROJECT ${TARGET:-} =="
+  sync_project "${1:-}"
+  install_project
+}
+
+run_job() {   # run_job <job> [args…]
+  local job="$1"; shift
+  local script="$PROJECT_DIR/jobs/$job.sh" args="" a
+  [ -f "$script" ] || die "no job '$job' ($script). Jobs: $(ls "$PROJECT_DIR/jobs" 2>/dev/null | sed 's/\.sh$//' | tr '\n' ' ')"
+  rsh "mkdir -p $R/scripts && cat > $R/scripts/$LEASE-$job.sh" < "$script"
+  for a in "$@"; do args+=" $(printf '%q' "$a")"; done
+  remote_job "$LEASE-$job" "$REMOTE_DIR" "$JOB_ENV; TARGET=$(printf '%q' "${TARGET:-}") bash $R/scripts/$LEASE-$job.sh$args"
+  pull_results
+}
+
+# finish_server <keep 0|1> <force 0|1>: delete the shared server unless other projects hold leases
+finish_server() {
+  local keep="$1" force="$2" others
+  others="$(leases)"
+  if [ -n "$others" ] && [ "$force" != 1 ]; then
+    echo "OTHER_PROJECTS_USING_THE_SERVER: not deleting it. Leases:"
+    leases_report
+    echo "(Coordinate with those sessions or ask the user; 'cloudmule end … --force' deletes it anyway.)"
+    return 0
+  fi
+  hc server list -l "$LABEL" -o json | tools ages
+  if [ "$keep" = 1 ]; then
+    echo "Saving the shared workspace…"
+    rsh "rm -rf $R/leases; sync" 2>/dev/null || true
+    hc server shutdown --wait --wait-timeout 120s "$SERVER" >/dev/null || hc server poweroff "$SERVER" >/dev/null
+    hc server create-image --type snapshot --description "cloudmule workspace $(date '+%Y-%m-%d %H:%M')" \
+      --label "$LABEL" --label role=workspace --label scope=shared "$SERVER" >/dev/null
+    prune_images "$WORKSPACE_SEL"
+  fi
+  delete_server "$SERVER"
+}
+
+# install_plugin: the Claude Code plugin (the cloudmule skill), from this folder's marketplace
+install_plugin() {
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "Claude Code's 'claude' command is not on PATH. Install the skill from Claude Code instead:"
+    echo "  /plugin marketplace add $(winpath "$CM_DIR")"
+    echo "  /plugin install cloudmule@cloudmule"
+    return 0
+  fi
+  if claude plugin list 2>/dev/null | grep 'cloudmule@cloudmule' >/dev/null; then
+    claude plugin marketplace update cloudmule >/dev/null 2>&1 || true
+    claude plugin update cloudmule@cloudmule >/dev/null 2>&1 || true
+    echo "Claude Code plugin 'cloudmule' is installed (refreshed from this folder; restart sessions to apply)."
+  elif claude plugin install cloudmule --marketplace "$(winpath "$CM_DIR")" >/dev/null; then
+    echo "Claude Code plugin 'cloudmule' installed: the skill is available in NEW Claude Code sessions."
+  else
+    echo "WARNING: could not install the plugin. In Claude Code: /plugin install cloudmule --marketplace $(winpath "$CM_DIR")" >&2
+  fi
+}
+
+claude_md_note() {   # claude_md_note <name>
+  cat <<EOF
+
+## Heavy work: cloudmule
+
+Heavy work in this project (installing dependencies, builds, test suites, dev servers, test browsers, rendering)
+can run on a rented cloud server instead of this computer, through cloudmule. Its settings for this project are in
+\`.cloudmule/\` (no secrets there). If cloudmule is installed on this computer, use the \`cloudmule\` skill
+(project name: \`$1\`); if it is not, ignore this section.
+EOF
+}
+
+case "$CMD" in
+  setup)
+    echo "== Token and prices =="
+    for t in $SERVER_TYPES; do hc server-type describe "$t" -o json | tools price "$LOCATIONS"; done
+    echo "== This computer's SSH key =="
+    [ -f "$KEY" ] || { ssh-keygen -q -t ed25519 -N "" -C "cloudmule" -f "$KEY"; echo "Key created in keys/."; }
+    mine="$(ssh-keygen -l -E md5 -f "$KEY.pub" | awk '{print $2}' | sed 's/^MD5://')"
+    if hc ssh-key describe "$SSH_KEY_NAME" >/dev/null 2>&1; then
+      theirs="$(hc ssh-key describe "$SSH_KEY_NAME" -o json | tools field fingerprint)"
+      [ "$mine" = "$theirs" ] || die "Hetzner already has a key named '$SSH_KEY_NAME' that is not this folder's key.
+If it belongs to an old copy of cloudmule on this computer, copy that copy's keys/ folder here, or delete the old
+key (hcloud ssh-key delete $SSH_KEY_NAME) and run setup again."
+      echo "Key '$SSH_KEY_NAME' is already registered in Hetzner."
+    else
+      hc ssh-key create --name "$SSH_KEY_NAME" --public-key-from-file "$KEY.pub" --label "$LABEL" >/dev/null
+      echo "Key registered in Hetzner as '$SSH_KEY_NAME'."
+    fi
+    write_home_pointer
+    echo "Location saved in $HOME_POINTER (the skill reads it to find this folder)."
+    echo "== Claude Code plugin =="
+    install_plugin
+    echo "SETUP_OK"
+    ;;
+
+  init)
+    ROOT="."; NAME=""; LOCAL=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --name) NAME="${2:?--name needs a value}"; shift 2 ;;
+        --local) LOCAL=1; shift ;;
+        -*) die "unknown option: $1" ;;
+        *) ROOT="$1"; shift ;;
+      esac
+    done
+    [ -d "$ROOT" ] || die "no such folder: $ROOT"
+    ROOT="$(cd "$ROOT" && pwd)"
+    case "$ROOT/" in "$CM_DIR"/*) die "a project cannot live inside cloudmule's own folder ($CM_DIR)" ;; esac
+    CFG="$ROOT/.cloudmule"
+    if [ -f "$CFG/config.sh" ]; then
+      FOUND="$(config_name "$CFG/config.sh")"
+      valid_name "$FOUND" || die "$CFG/config.sh has no valid PROJECT_NAME"
+      [ -z "$NAME" ] || [ "$NAME" = "$FOUND" ] || die "$CFG/config.sh says PROJECT_NAME=$FOUND, not '$NAME'"
+      NAME="$FOUND"; NEW=0
+      echo "Found $CFG (project '$NAME'): registering it on this computer."
+    else
+      [ -n "$NAME" ] || NAME="$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')"
+      valid_name "$NAME" || die "cannot derive a project name from the folder; pass --name <lowercase-name>"
+      NEW=1
+    fi
+    if [ -f "$REGISTRY/$NAME" ] && [ "$(cat "$REGISTRY/$NAME")" != "$ROOT" ]; then
+      die "a project named '$NAME' is already registered at $(cat "$REGISTRY/$NAME").
+Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exists."
+    fi
+    if [ "$NEW" = 1 ]; then
+      mkdir -p "$CFG"; cp -R "$CM_DIR/template/." "$CFG/"
+      sed -E "s/^PROJECT_NAME=.*/PROJECT_NAME=$NAME/" "$CFG/config.sh" > "$CFG/config.sh.tmp" && mv "$CFG/config.sh.tmp" "$CFG/config.sh"
+      echo "Created $CFG from the template: edit config.sh and write the jobs (jobs/*.sh)."
+    fi
+    printf '%s\n' "$ROOT" > "$REGISTRY/$NAME"
+    write_home_pointer
+    if [ "$LOCAL" = 1 ]; then
+      EXCL="$(git -C "$ROOT" rev-parse --git-path info/exclude 2>/dev/null)" || die "--local needs the project to be a git repository"
+      case "$EXCL" in /*|?:*) ;; *) EXCL="$ROOT/$EXCL" ;; esac
+      mkdir -p "$(dirname "$EXCL")"
+      grep -qxF '.cloudmule/' "$EXCL" 2>/dev/null || echo '.cloudmule/' >> "$EXCL"
+      echo "Kept out of git: .cloudmule/ is in $EXCL (local to this computer, not shared)."
+    elif ! grep -qs 'cloudmule' "$ROOT/CLAUDE.md"; then
+      claude_md_note "$NAME" >> "$ROOT/CLAUDE.md"
+      echo "Added a short cloudmule note to $ROOT/CLAUDE.md."
+    fi
+    echo "INIT_OK: project '$NAME' at $ROOT"
+    ;;
+
+  projects)
+    found=0
+    for f in "$REGISTRY"/*; do
+      [ -e "$f" ] || continue; found=1
+      n="$(basename "$f")"; d="$(cat "$f")"
+      if [ -f "$d/.cloudmule/config.sh" ]; then echo "  $n  $d"; else echo "  $n  $d  (MISSING: .cloudmule/config.sh)"; fi
+    done
+    [ "$found" = 1 ] || echo "  no projects yet (in a project's folder: cloudmule init)"
+    ;;
+
+  servers)
+    if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then take_project "$@"; set -- "${REST[@]+"${REST[@]}"}"; else no_project_reqs; fi
+    for a in "$@"; do case "$a" in --fresh) FRESH=1 ;; *) die "unknown option: $a" ;; esac; done
+    if server_exists "$SERVER"; then
+      echo "Running now: $SERVER ($(hc server describe "$SERVER" -o json | tools server-type)). Joining it needs no choice;"
+      echo "this menu applies the next time the server is created."
+    fi
+    if [ "$FRESH" = 1 ]; then workspace_info --fresh; else workspace_info; fi
+    if [ -n "$WS_IMAGE" ]; then
+      echo "Saved workspace: snapshot $WS_IMAGE ($WS_ARCH, from a $WS_DISK GB disk): it restores only on a disk >= $WS_DISK GB."
+      echo "  --fresh ignores it (smaller servers become possible; every project uploads and installs again)."
+    elif [ "$FRESH" = 1 ]; then echo "Saved workspace: ignored (--fresh)."
+    else echo "Saved workspace: none yet (the first server's disk size will limit later restores)."; fi
+    if [ -n "${PROJECT:-}" ]; then
+      echo "Project $PROJECT needs: RAM >= $MIN_RAM_GB GB ($RAM_SRC), vCPU >= $MIN_CPUS ($CPUS_SRC), disk >= $MIN_DISK_GB GB ($DISK_SRC),"
+      echo "  CPU architecture: ${PROJECT_ARCHS:-none} (from its MODULES). Preferred types: $SERVER_TYPES ($TYPES_SRC)."
+    fi
+    echo "Locations: $LOCATIONS"
+    reqs_args
+    hc server-type list -o json | tools menu "${REQS[@]}"
+    ;;
+
+  start)
+    take_project "$@"; set -- "${REST[@]+"${REST[@]}"}"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --type) CHOSEN_TYPE="${2:?--type needs a server type}"; shift 2 ;;
+        --location) CHOSEN_LOCATION="${2:?--location needs a location}"; shift 2 ;;
+        --fresh) FRESH=1; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        *) die "unknown option: $1" ;;
+      esac
+    done
+    if [ -n "$CHOSEN_LOCATION" ]; then
+      case " $LOCATIONS " in *" $CHOSEN_LOCATION "*) ;; *) die "location '$CHOSEN_LOCATION' is not in LOCATIONS ($LOCATIONS)" ;; esac
+    fi
+    up_server session
+    prepare_project
+    echo "START_OK: $PROJECT ${TARGET:-} on the server $SERVER ($IP)"
+    leases_report
+    ;;
+
+  sync)
+    take_project "$@"; need_server; lease_add
+    sync_project "${REST[0]:-}"; install_project
+    ;;
+
+  job)
+    take_project "$@"; set -- "${REST[@]+"${REST[@]}"}"
+    [ $# -ge 1 ] || die "missing the job name"
+    need_server; lease_add; ensure_modules; server_setup; sync_project; install_project
+    run_job "$@"
+    echo "JOB_OK: $1"
+    ;;
+
+  attach)
+    take_project "$@"; need_server; lease_add
+    remote_wait "$LEASE-${REST[0]:?missing the job name}"
+    pull_results
+    ;;
+
+  pull)
+    take_project "$@"; need_server; lease_add
+    for p in "${REST[@]}"; do
+      mkdir -p "$LOCAL_DIR/$(dirname "$p")"
+      scp -q -r "${SSH_OPTS[@]}" "root@$IP:$REMOTE_DIR/$p" "$LOCAL_DIR/$(dirname "$p")/" && echo "PULL_OK: $LOCAL_DIR/$p"
+    done
+    ;;
+
+  run)
+    take_project "$@"; need_server; lease_add
+    if [ ${#REST[@]} -eq 0 ]; then rsh_tty "cd '$REMOTE_DIR' && $JOB_ENV && exec bash -l"
+    else rsh "cd '$REMOTE_DIR' && $JOB_ENV && ${REST[*]}"; fi
+    ;;
+
+  end)
+    take_project "$@"
+    KEEP=0; FORGET=0; FORCE=0
+    for a in "${REST[@]+"${REST[@]}"}"; do
+      case "$a" in --keep) KEEP=1 ;; --forget) FORGET=1 ;; --force) FORCE=1 ;; *) die "unknown option: $a" ;; esac
+    done
+    if server_exists "$SERVER"; then
+      IP="$(hc server ip "$SERVER")"
+      [ "$FORGET" = 1 ] && { rsh "rm -rf '$REMOTE_DIR'"; echo "Deleted $REMOTE_DIR on the server."; }
+      lease_drop
+      finish_server "$KEEP" "$FORCE"
+    else
+      echo "The server $SERVER is not running."
+      [ "$FORGET" = 1 ] && echo "(--forget needs the server running: the folder is still in the workspace snapshot.)"
+    fi
+    left="$(hc server list -l "$LABEL" -o noheader -o columns=name)"
+    [ -z "$left" ] && echo "END_OK: no server is billing." || echo "Still running (and billing): $left"
+    ;;
+
+  oneshot)
+    take_project "$@"; set -- "${REST[@]+"${REST[@]}"}"
+    [ $# -ge 1 ] || die "missing the job name"
+    SYNC_EXCLUDE="$SYNC_EXCLUDE ${ONESHOT_EXCLUDE:-}"
+    up_server oneshot
+    finish() { lease_drop; finish_server 0 0; }
+    trap finish EXIT
+    prepare_project
+    run_job "$@"
+    echo "ONESHOT_OK: $1"
+    ;;
+
+  tunnel)
+    take_project "$@"; need_server; lease_add
+    PORT="${REST[0]:?missing the port}"
+    echo "Tunnel open: http://localhost:$PORT/  ->  $SERVER:127.0.0.1:$PORT  (Ctrl+C closes it)"
+    echo "While it is open it counts as activity: the guard does not delete the server."
+    ssh -N -L "$PORT:127.0.0.1:$PORT" -o ExitOnForwardFailure=yes "${SSH_OPTS[@]}" "root@$IP"
+    ;;
+
+  leases)
+    server_exists "$SERVER" || { echo "The server $SERVER is not running."; exit 0; }
+    IP="$(hc server ip "$SERVER")"
+    l="$(leases)"; [ -n "$l" ] && leases_report || echo "  nobody holds a lease (the server is free)"
+    ;;
+
+  status)
+    echo "== Servers (they bill by the hour while they exist, running or not) =="
+    servers="$(hc server list -l "$LABEL" -o json)"
+    if [ "$(printf '%s' "$servers" | tr -d '[:space:]')" = "[]" ]; then echo "  none"
+    else
+      printf '%s' "$servers" | tools ages
+      over="$(printf '%s' "$servers" | tools overdue "$(( SESSION_MAX_HOURS + 1 ))")"
+      [ -n "$over" ] && echo "WARNING: past the time limit (did the guard fail?): $over" >&2
+      if server_exists "$SERVER"; then IP="$(hc server ip "$SERVER")"; echo "== Leases on $SERVER =="; leases_report; fi
+    fi
+    echo "== Snapshots (they bill per GB per month) =="
+    hc image list -t snapshot -l "$LABEL" -o columns=id,description,image_size,created
+    ;;
+
+  help|-h|--help|*)
+    awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
+    ;;
+esac

@@ -1,0 +1,6 @@
+# Scripts run under bash on Linux servers (and Git Bash): always LF, also when cloned on Windows.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.woff2 binary

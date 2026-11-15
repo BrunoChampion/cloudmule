@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Fake Hetzner CLI for cloudmule's tests: answers the calls cloudmule makes from recorded fixtures (captured from
+# the real API on 2026-11-14, trimmed to the fields cloudmule reads), logs every call to $FAKE_HC_LOG, and NEVER
+# creates anything: `server create` is logged and fails.
+#
+# FAKE_HC_SCENARIO:
+#   workspace    (default) no server running; a saved workspace snapshot taken from a 640 GB x86 disk
+#   empty        no server running, no snapshot
+#   running      the shared server is running as a cpx22 (2 vCPU / 4 GB / 80 GB); workspace as above
+#   available    like empty, but every server type is available everywhere
+# FAKE_HC_KEY_FP: if set, the SSH key "cloudmule-<host>" exists in Hetzner with this MD5 fingerprint.
+set -euo pipefail
+FIX="$(cd "$(dirname "$0")/../fixtures" && pwd)"
+SCENARIO="${FAKE_HC_SCENARIO:-workspace}"
+echo "$*" >> "${FAKE_HC_LOG:-/dev/null}"
+if command -v python3 >/dev/null 2>&1 && python3 -c '' >/dev/null 2>&1; then PY=python3; else PY=python; fi
+
+running() { [ "$SCENARIO" = running ]; }
+has_workspace() { [ "$SCENARIO" = workspace ] || [ "$SCENARIO" = running ]; }
+types_file() { if [ "$SCENARIO" = available ]; then echo "$FIX/server-types-all-available.json"; else echo "$FIX/server-types.json"; fi; }
+
+case "$*" in
+  "server list "*"-o json"*)            if running; then printf '[%s]\n' "$(cat "$FIX/server-running.json")"; else echo "[]"; fi ;;
+  "server list "*"columns=name"*)       if running; then echo cloudmule; fi ;;
+  "server ip cloudmule")                echo 203.0.113.10 ;;
+  "server describe cloudmule -o json")  cat "$FIX/server-running.json" ;;
+  "server create "*)                    echo "fake hcloud: refusing to create a server in tests" >&2; exit 1 ;;
+  "server-type list -o json")           cat "$(types_file)" ;;
+  "server-type describe "*" -o json")
+    f="$(types_file)"; if command -v cygpath >/dev/null 2>&1; then f="$(cygpath -w "$f")"; fi
+    "$PY" -I -c 'import json,sys; print(json.dumps(next(t for t in json.load(open(sys.argv[1])) if t["name"] == sys.argv[2])))' \
+      "$f" "$3" ;;
+  "image list "*"role=workspace"*)      if has_workspace; then echo 1000001; fi ;;
+  "image list "*)
+    echo "ID          DESCRIPTION                         IMAGE SIZE   CREATED"
+    if has_workspace; then echo "1000001   cloudmule workspace (test fixture)  27.50 GB     2026-11-14 08:05:02 -05"; fi ;;
+  "image describe 1000001 -o json")   cat "$FIX/image-workspace.json" ;;
+  "ssh-key list "*)                     echo cloudmule-test ;;
+  "ssh-key describe "*" -o json")       [ -n "${FAKE_HC_KEY_FP:-}" ] && printf '{"fingerprint": "%s"}\n' "$FAKE_HC_KEY_FP" || exit 1 ;;
+  "ssh-key describe "*)                 [ -n "${FAKE_HC_KEY_FP:-}" ] || { echo "hcloud: ssh key not found" >&2; exit 1; } ;;
+  "ssh-key create "*)                   echo "SSH key created" ;;
+  *)                                    echo "UNHANDLED $*" >> "${FAKE_HC_LOG:-/dev/null}"
+                                        echo "fake hcloud: unhandled call: $*" >&2; exit 2 ;;
+esac

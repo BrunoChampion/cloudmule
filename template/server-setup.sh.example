@@ -1,0 +1,9 @@
+# Optional: rename to server-setup.sh to install system tools only this project needs (a JDK + Android SDK, a
+# CLI…). Runs ON the server as root, once per server (again only when this file changes); the result is kept in
+# the shared workspace snapshot.
+# The server is shared by all your projects: never replace something global another project relies on. Install
+# into your own path (/opt/<project>/…) and add it to PATH in your jobs. Pin versions and verify checksums.
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -q
+# apt-get install -y -q --no-install-recommends openjdk-17-jdk-headless

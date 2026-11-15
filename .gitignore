@@ -1,0 +1,6 @@
+# secrets and per-computer state: never versioned
+.env
+keys/
+logs/
+registry/
+__pycache__/

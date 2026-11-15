@@ -1,0 +1,1572 @@
+[
+ {
+  "id": 22,
+  "name": "cpx11",
+  "cores": 2,
+  "memory": 2,
+  "disk": 40,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "0.0328000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0096000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0096000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "0.0328000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0096000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.0184000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 23,
+  "name": "cpx21",
+  "cores": 3,
+  "memory": 4,
+  "disk": 80,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "0.0601000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0176000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0176000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "0.0601000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0176000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.0352000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 24,
+  "name": "cpx31",
+  "cores": 4,
+  "memory": 8,
+  "disk": 160,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "0.1178000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0328000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0328000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "0.1178000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0328000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.0617000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 25,
+  "name": "cpx41",
+  "cores": 8,
+  "memory": 16,
+  "disk": 240,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "0.2267000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0609000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0609000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "0.2267000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0609000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.1050000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 26,
+  "name": "cpx51",
+  "cores": 16,
+  "memory": 32,
+  "disk": 360,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "0.4479000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.1338000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.1338000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "0.4479000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.1338000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.1891000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 45,
+  "name": "cax11",
+  "cores": 2,
+  "memory": 4,
+  "disk": 40,
+  "cpu_type": "shared",
+  "architecture": "arm",
+  "deprecated": false,
+  "category": "cost_optimized",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0112000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0112000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0112000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 93,
+  "name": "cax21",
+  "cores": 4,
+  "memory": 8,
+  "disk": 80,
+  "cpu_type": "shared",
+  "architecture": "arm",
+  "deprecated": false,
+  "category": "cost_optimized",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0200000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0200000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0200000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 94,
+  "name": "cax31",
+  "cores": 8,
+  "memory": 16,
+  "disk": 160,
+  "cpu_type": "shared",
+  "architecture": "arm",
+  "deprecated": false,
+  "category": "cost_optimized",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0400000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0400000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0400000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 95,
+  "name": "cax41",
+  "cores": 16,
+  "memory": 32,
+  "disk": 320,
+  "cpu_type": "shared",
+  "architecture": "arm",
+  "deprecated": false,
+  "category": "cost_optimized",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0777000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0777000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0777000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 96,
+  "name": "ccx13",
+  "cores": 2,
+  "memory": 8,
+  "disk": 80,
+  "cpu_type": "dedicated",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "general_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "0.0817000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0809000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0681000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "0.0817000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0809000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.1017000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 97,
+  "name": "ccx23",
+  "cores": 4,
+  "memory": 16,
+  "disk": 160,
+  "cpu_type": "dedicated",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "general_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "0.1650000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.1626000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.1378000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "0.1650000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.1626000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.2051000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 98,
+  "name": "ccx33",
+  "cores": 8,
+  "memory": 32,
+  "disk": 240,
+  "cpu_type": "dedicated",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "general_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "0.2660000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.2612000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.2219000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "0.2660000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.2612000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.3301000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 99,
+  "name": "ccx43",
+  "cores": 16,
+  "memory": 64,
+  "disk": 360,
+  "cpu_type": "dedicated",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "general_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "0.5280000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.5216000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.4431000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "0.5280000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.5216000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.6442000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 100,
+  "name": "ccx53",
+  "cores": 32,
+  "memory": 128,
+  "disk": 600,
+  "cpu_type": "dedicated",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "general_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "1.0184000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "1.0088000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.8574000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "1.0184000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "1.0088000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "1.2332000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 101,
+  "name": "ccx63",
+  "cores": 48,
+  "memory": 192,
+  "disk": 960,
+  "cpu_type": "dedicated",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "general_purpose",
+  "prices": [
+   {
+    "location": "ash",
+    "price_hourly": {
+     "gross": "1.6258000000000000"
+    }
+   },
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "1.6138000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "1.3710000000000000"
+    }
+   },
+   {
+    "location": "hil",
+    "price_hourly": {
+     "gross": "1.6258000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "1.6138000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "1.9607000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "ash",
+    "available": true
+   },
+   {
+    "name": "hil",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 108,
+  "name": "cpx12",
+  "cores": 1,
+  "memory": 2,
+  "disk": 40,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0216000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0176000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0216000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.0288000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 109,
+  "name": "cpx22",
+  "cores": 2,
+  "memory": 4,
+  "disk": 80,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0368000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0312000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0368000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.0497000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 110,
+  "name": "cpx32",
+  "cores": 4,
+  "memory": 8,
+  "disk": 160,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0673000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0569000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0673000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.0929000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 111,
+  "name": "cpx42",
+  "cores": 8,
+  "memory": 16,
+  "disk": 320,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.1314000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.1114000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.1314000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.1763000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 112,
+  "name": "cpx52",
+  "cores": 12,
+  "memory": 24,
+  "disk": 480,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.1907000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.1618000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.1907000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.2540000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 113,
+  "name": "cpx62",
+  "cores": 16,
+  "memory": 32,
+  "disk": 640,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.2452000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.2083000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.2452000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.3253000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 114,
+  "name": "cx23",
+  "cores": 2,
+  "memory": 4,
+  "disk": 40,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "cost_optimized",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0104000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0104000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0104000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 115,
+  "name": "cx33",
+  "cores": 4,
+  "memory": 8,
+  "disk": 80,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "cost_optimized",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0160000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0160000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0160000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 116,
+  "name": "cx43",
+  "cores": 8,
+  "memory": 16,
+  "disk": 160,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "cost_optimized",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0296000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0296000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0296000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 117,
+  "name": "cx53",
+  "cores": 16,
+  "memory": 32,
+  "disk": 320,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "cost_optimized",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0561000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0561000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0561000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   }
+  ]
+ },
+ {
+  "id": 118,
+  "name": "cpx02",
+  "cores": 1,
+  "memory": 1,
+  "disk": 20,
+  "cpu_type": "shared",
+  "architecture": "x86",
+  "deprecated": false,
+  "category": "regular_purpose",
+  "prices": [
+   {
+    "location": "fsn1",
+    "price_hourly": {
+     "gross": "0.0120000000000000"
+    }
+   },
+   {
+    "location": "hel1",
+    "price_hourly": {
+     "gross": "0.0096000000000000"
+    }
+   },
+   {
+    "location": "nbg1",
+    "price_hourly": {
+     "gross": "0.0120000000000000"
+    }
+   },
+   {
+    "location": "sin",
+    "price_hourly": {
+     "gross": "0.0144000000000000"
+    }
+   }
+  ],
+  "locations": [
+   {
+    "name": "fsn1",
+    "available": true
+   },
+   {
+    "name": "nbg1",
+    "available": true
+   },
+   {
+    "name": "hel1",
+    "available": true
+   },
+   {
+    "name": "sin",
+    "available": true
+   }
+  ]
+ }
+]

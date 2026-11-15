@@ -1,0 +1,10 @@
+{
+  "name": "cloudmule",
+  "version": "0.1.0",
+  "description": "Run dependency installs, builds, tests, dev servers, browsers and renders on a Hetzner server rented by the hour instead of your computer.",
+  "author": {
+    "name": "Bruno Champion (NYVEX)"
+  },
+  "license": "MIT",
+  "keywords": ["hetzner", "remote", "build", "tests", "ram", "offload"]
+}

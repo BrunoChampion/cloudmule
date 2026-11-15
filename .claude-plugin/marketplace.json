@@ -1,0 +1,17 @@
+{
+  "name": "cloudmule",
+  "owner": {
+    "name": "Bruno Champion (NYVEX)"
+  },
+  "metadata": {
+    "description": "Run your projects' heavy work on a Hetzner server rented by the hour, from Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "cloudmule",
+      "source": "./plugin",
+      "description": "Skill that runs dependency installs, builds, tests, dev servers, browsers and renders on a rented Hetzner server instead of your computer, and sets projects up for it.",
+      "version": "0.1.0"
+    }
+  ]
+}
