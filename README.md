@@ -54,8 +54,9 @@ Tested on Windows 11 with Git Bash. macOS and Linux should work (plain bash), bu
    bash bin/cloudmule setup    # checks the token, creates this computer's SSH key, installs the Claude Code plugin
    ```
 3. Start a new Claude Code session. The `cloudmule` skill is now available in all your projects.
-   (`setup` installs it for you; to install it from Claude Code instead:
-   `/plugin install cloudmule --marketplace <path-to-this-folder>`.)
+   (`setup` installs it for you. To install it from Claude Code instead, in one command:
+   `/plugin install cloudmule --marketplace BrunoChampion/cloudmule`. The skill still needs this folder, set up
+   with your token: it is what talks to Hetzner.)
 
 `setup` also writes one file outside this folder, `~/.config/cloudmule/home`, holding this folder's location
 so the skill can find it. Moved the folder? Run `setup` again.
