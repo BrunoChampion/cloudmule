@@ -38,7 +38,8 @@ current project is the one whose folder contains the working directory.
    `SERVER_BELOW_REQUIREMENTS`, tell them what is missing and let them decide. If no server is running:
    - Run `servers <project> [target]` (free). Its output is the source of truth for the choice: relay it in
      plain words, in the user's language, in this order:
-     1. The "How to choose" guide, briefly.
+     1. The "How to choose" guide, briefly, with the measured needs from `usage <project>` (free): its highest
+        peak RAM and cores, when it has records.
      2. The **disk floor**: its current value, or that this choice sets it.
      3. A short table of the types marked `fits`: type, vCPU, RAM, CPU kind, €/h, and each row's disk-floor
         note (`raises disk floor …` / `sets disk floor …`, with the types lost).

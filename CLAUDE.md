@@ -78,6 +78,7 @@ Run from any folder: `bash <cloudmule-folder>/bin/cloudmule …` (the skill find
 | `oneshot <proj> [target] <job> [args…]` | One job: uses the server if it is on; otherwise creates it and deletes it at the end if nobody else uses it (also on failure) | Yes, if it creates it |
 | `leases` | Who is using the server, since when, which jobs run | No |
 | `status` | Servers (billed hours), leases and snapshots | No |
+| `usage [proj] [target]` | Per project and job: runs, highest peak RAM, RAM wait (stalled for lack of memory), typical and highest cores used, longest run, server types (from `logs/usage.tsv`; works without a token) | No |
 
 `[target]` only exists for projects with `NEEDS_TARGET=1` (one sub-folder per piece of work, e.g. per video);
 on the server each target lives in `/root/work/<project>/<target>`.
@@ -117,7 +118,14 @@ modules) and `setup/<project>-<hash>` (server-setup done). Project files live in
 
 **On this computer:** `.env` (token and settings; a setting given in the environment wins, e.g.
 `IDLE_MINUTES=10 cloudmule start …`), `keys/` (this computer's SSH key), `registry/<project>`
-(each project's folder), `logs/` (every job's log). None of it is versioned.
+(each project's folder), `logs/` (every job's log, deleted after `LOG_KEEP_DAYS` = 14; and `usage.tsv`, one line
+per job with its peak RAM and CPU time, kept `USAGE_KEEP_DAYS` = 90). None of it is versioned.
+
+**Job usage:** every remote job runs in its own cgroup (a transient systemd scope); when it ends, the wrapper
+reads the kernel's `memory.peak` (file cache included: an upper bound), `cpu.stat` and `memory.pressure` (how
+long it stalled for lack of RAM: ~0 means the RAM was enough) and writes one line next to its log; `job`/`attach`
+collect it exactly once (an uncollected previous run is kept as `.usage.prev`). Nothing is sampled. `n/a` means
+the scope could not be created (the job then runs unmeasured).
 
 **Server type:** the user chooses it. `servers` reads the API's server types (`server-type list`: cores, memory,
 disk, `cpu_type`, `architecture`, `prices[]`, `locations[].available`) and checks each against the project's

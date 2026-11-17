@@ -118,6 +118,26 @@ The output of `servers` is the single source of truth: the skill never restates 
   average cores, longest duration, and the server types seen.
 - If the kernel does not expose `memory.peak` (cgroup v1, old kernel), the line records `n/a` and the job is
   unaffected. To verify on the first real job (Ubuntu 24.04 ships kernel 6.8, where `memory.peak` exists).
+- As built: the wrapper runs the command in a subshell `( … )`, so an `exit` or `set -e` inside it can no longer
+  skip the `EXIT` line (found while testing: before, such a job left `remote_wait` waiting forever). If
+  `systemd-run --scope` fails before the job starts (no log yet), the job runs unmeasured; once the log exists
+  it never runs twice. `job_label` strips the lease or project prefix from the remote job's name. `attach`
+  collects the line too (it is deleted on the server once collected, so it is never counted twice). `usage` works
+  without a token, and applies both age limits when it reads. The guide's RAM line and the skill point to `usage`.
+- After the code review (2026-11-16):
+  - `memory.peak` counts file cache, so it is an upper bound. The line also records `memory.pressure` ("some"
+    total): the time the job stalled for lack of RAM. The report shows it as RAM WAIT; near 0 s means the RAM was
+    enough. Decided without asking the user (a default, easy to change).
+  - The server writes `key=value` pairs, so a missing value becomes `n/a` instead of dropping the record.
+  - `usage.tsv` keeps raw units: MB, CPU seconds, stall seconds; 12 columns, documented in `bin/tools.py`.
+    Appends never rewrite the file (old lines go when `usage` reads it, or in a weekly catch-up), so concurrent
+    sessions rarely race.
+  - Collection is atomic (`mv`), and a run nobody collected is kept as `.usage.prev` and collected next time.
+  - The log exists before the job starts, and the job marks its start (`.log.run`), so `remote_wait` never
+    misses a starting job and the fallback never runs a job twice.
+  - `leases` counts jobs, not processes.
+  - The report groups by project and job (targets merged; `usage <project> <target>` filters). Server RAM is
+    shown nominal (MemTotal rounded up), and the vCPUs come from the run with the most cores.
 
 ## Testing Decisions
 

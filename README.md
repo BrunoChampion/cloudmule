@@ -73,6 +73,7 @@ cloudmule start my-app --type cpx42       # creates the server you chose (or joi
 cloudmule job   my-app test       # uploads changes, runs .cloudmule/jobs/test.sh there, downloads results
 cloudmule end   my-app --keep     # snapshot + delete the server (unless another project is using it)
 cloudmule status                  # what exists and bills right now
+cloudmule usage my-app            # what each job used (peak RAM, cores, time), to pick a server size (free)
 ```
 
 (`cloudmule` here means `bash <cloudmule-folder>/bin/cloudmule`.) Run `cloudmule help` for every command.

@@ -31,9 +31,11 @@
 #                                                   it at the end if nobody else is using it
 #   cloudmule leases                                who is using the server (and for how long, running jobs)
 #   cloudmule status                                what exists and therefore bills: server, leases, snapshots
+#   cloudmule usage   [project] [target]            what each job used (peak RAM, cores, time), measured on every
+#                                                   remote job; to choose a server size with evidence (no cost)
 #
 # [target] is only for projects with NEEDS_TARGET=1 (one sub-folder per piece of work, e.g. per video).
-case "${1:-help}" in init|projects|help|-h|--help) export CM_NO_TOKEN=1 ;; esac
+case "${1:-help}" in init|projects|usage|help|-h|--help) export CM_NO_TOKEN=1 ;; esac
 . "$(dirname "$0")/lib.sh"
 
 CMD="${1:-help}"; shift || true
@@ -401,6 +403,12 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     fi
     echo "== Snapshots (they bill per GB per month) =="
     hc image list -t snapshot -l "$LABEL" -o columns=id,description,image_size,created
+    ;;
+
+  usage)
+    # local only: logs/usage.tsv (one line per remote job). Reading it also applies both age limits.
+    tools prune-logs "$(winpath "$CM_DIR/logs")" "$LOG_KEEP_DAYS"
+    tools usage "$(winpath "$USAGE_FILE")" "$USAGE_KEEP_DAYS" "${1:-}" "${2:-}"
     ;;
 
   help|-h|--help|*)

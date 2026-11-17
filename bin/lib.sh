@@ -4,7 +4,7 @@ set -euo pipefail
 
 CM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # settings given in the environment win over .env (e.g. IDLE_MINUTES=10 cloudmule start …)
-CM_SETTINGS='SERVER_TYPES|LOCATIONS|IDLE_MINUTES|SESSION_MAX_HOURS|ONESHOT_IDLE_MINUTES|ONESHOT_MAX_HOURS|BASE_IMAGE|SERVER_NAME'
+CM_SETTINGS='SERVER_TYPES|LOCATIONS|IDLE_MINUTES|SESSION_MAX_HOURS|ONESHOT_IDLE_MINUTES|ONESHOT_MAX_HOURS|BASE_IMAGE|SERVER_NAME|LOG_KEEP_DAYS|USAGE_KEEP_DAYS'
 CM_FROM_ENV="$(env | grep -E "^($CM_SETTINGS)=" || true)"
 if [ -f "$CM_DIR/.env" ]; then set -a; . "$CM_DIR/.env"; set +a; fi
 while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$CM_FROM_ENV"
@@ -23,6 +23,9 @@ ONESHOT_IDLE_MINUTES=${ONESHOT_IDLE_MINUTES:-20}  # one-shot: delete after this 
 ONESHOT_MAX_HOURS=${ONESHOT_MAX_HOURS:-3}
 BASE_IMAGE=${BASE_IMAGE:-ubuntu-24.04}            # first server ever (no workspace snapshot yet)
 SERVER="${SERVER_NAME:-cloudmule}"                # ONE server shared by all your projects
+LOG_KEEP_DAYS=${LOG_KEEP_DAYS:-14}                # full job logs in logs/ older than this are deleted
+USAGE_KEEP_DAYS=${USAGE_KEEP_DAYS:-90}            # one line per job in logs/usage.tsv, kept this long
+USAGE_FILE="$CM_DIR/logs/usage.tsv"
 LABEL="managed-by=cloudmule"
 WORKSPACE_SEL="role=workspace,scope=shared"
 R=/root/cloudmule                                 # cloudmule's own state on the server
@@ -246,7 +249,7 @@ leases() { rsh "ls $R/leases 2>/dev/null" 2>/dev/null || true; }
 # leases_report: one line per lease: name, minutes since last use, and jobs of that project running now
 leases_report() {
   rsh "now=\$(date +%s); for f in $R/leases/*; do [ -e \"\$f\" ] || continue; n=\$(basename \"\$f\");
-         age=\$(( (now - \$(stat -c %Y \"\$f\")) / 60 )); jobs=\$(pgrep -af \"$R/jobs/\$n-\" | grep -v pgrep | wc -l);
+         age=\$(( (now - \$(stat -c %Y \"\$f\")) / 60 )); jobs=\$(pgrep -af \"$R/jobs/\$n-\" | grep -v pgrep | grep -o \"$R/jobs/\$n-[^ ]*\\.log\" | sort -u | wc -l);
          echo \"  \$n: last used \${age} min ago, jobs running: \$jobs  (\$(cat \"\$f\"))\"; done" 2>/dev/null || true
 }
 
@@ -283,8 +286,12 @@ server_setup() {
 # systemd timer running remote/guard.py every 5 min. In session mode the guard snapshots before deleting.
 arm_guard() {
   local mode="$1" idle="$2" maxh="$3" sid
-  sid="$(hc server describe "$SERVER" -o json | tools field id)"
+  local sj; sj="$(hc server describe "$SERVER" -o json)"
+  sid="$(printf '%s' "$sj" | tools field id)"
   printf '%s' "$HCLOUD_TOKEN" | rsh 'umask 077; mkdir -p /run/cloudmule; cat > /run/cloudmule/token'
+  # the server type, for every job's usage line (RAM disk: a restored workspace may run on another type)
+  local stype; stype="$(printf '%s' "$sj" | tools server-type | cut -d, -f1)" || true
+  rsh "echo ${stype:-unknown} > /run/cloudmule/server-type"
   rsh 'cat > /run/cloudmule/guard.py' < "$CM_DIR/remote/guard.py"
   rsh "systemctl stop cloudmule-guard.timer cloudmule-guard.service >/dev/null 2>&1; \
        systemctl reset-failed cloudmule-guard.timer cloudmule-guard.service >/dev/null 2>&1; \
@@ -295,16 +302,48 @@ arm_guard() {
 }
 
 # ---------------------------------------------------------------- remote jobs
+# MEASURE runs on the server right after a job, inside the job's own cgroup, and prints one measurement line of
+# key=value pairs (read by `tools usage-add`; a missing or empty value counts as n/a). The kernel keeps the
+# cgroup's peak RAM (memory.peak, file cache included), CPU time (cpu.stat) and the time its tasks stalled for
+# lack of memory (memory.pressure, "some" total): nothing is sampled.
+MEASURE='pk=; cu=; pr=
+if [ "${CM_SCOPED:-}" = 1 ]; then
+  cg=/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/self/cgroup)
+  pk=$(cat $cg/memory.peak 2>/dev/null); cu=$(awk "/^usage_usec/{print \$2}" $cg/cpu.stat 2>/dev/null)
+  pr=$(sed -n "s/^some .*total=//p" $cg/memory.pressure 2>/dev/null)
+fi
+echo "start=$s end=$(date +%s) exit=$rc peak_bytes=$pk cpu_usec=$cu stall_usec=$pr" \
+  "type=$(cat /run/cloudmule/server-type 2>/dev/null) vcpus=$(nproc) mem_kb=$(awk "/^MemTotal/{print \$2}" /proc/meminfo)"'
+
 # remote_job <name> <remote_dir> <command>: runs detached from SSH (survives a dropped connection or this computer
 # killing the local process), follows it and saves the log in logs/. Returns the command's success.
 remote_job() {
-  local name="$1" dir="$2" cmd="$3" log="$R/jobs/$1.log" inner
-  # { …; } so the log captures every command of a chain, not only the last one
-  inner="{ $cmd; } > $log 2>&1; echo \"EXIT \$?\" >> $log"
+  local name="$1" dir="$2" cmd="$3" log="$R/jobs/$1.log" use="$R/jobs/$1.usage" inner q launch
+  # ( … ) so the log captures every command of a chain, and an `exit` or `set -e` inside the command cannot skip
+  # the EXIT line. The measurement is written before the EXIT line, which tells remote_wait the job is over.
+  inner="touch $log.run; s=\$(date +%s); ( $cmd ) > $log 2>&1; rc=\$?; { $MEASURE; } > $use 2>/dev/null
+         echo \"EXIT \$rc\" >> $log"
+  q="$(printf '%q' "$inner")"
+  # its own cgroup (a transient systemd scope) is what makes it measurable; if the scope cannot be created the
+  # job runs unmeasured. The job marks its start ($log.run) first thing, so a job that started (and then ended
+  # or was stopped) never runs twice.
+  launch="if command -v systemd-run >/dev/null 2>&1; then
+    CM_SCOPED=1 systemd-run --scope --quiet --collect bash -c $q || { test -f $log.run || bash -c $q; }
+  else bash -c $q; fi"
   # only the job goes to the background ({ … & }), fully detached, so this SSH call returns at once
-  rsh "mkdir -p $R/jobs && rm -f $log && cd '$dir' && export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true && \
-       { nohup setsid -f bash -c $(printf '%q' "$inner") >/dev/null 2>&1 < /dev/null & }"
+  # an uncollected measurement of the previous run (local process killed, no attach) is kept as .prev
+  # the log exists before the job starts, so remote_wait never misses a job that is still starting
+  rsh "mkdir -p $R/jobs && rm -f $log.run && : > $log && { [ ! -f $use ] || mv -f $use $use.prev; } && cd '$dir' && export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true && \
+       { nohup setsid -f bash -c $(printf '%q' "$launch") >/dev/null 2>&1 < /dev/null & }"
   remote_wait "$name"
+}
+
+# job_label <remote job name>: the job's name without its lease or project prefix (for its usage line)
+job_label() {
+  local n="$1"
+  if [ -n "${LEASE:-}" ] && [ "${n#"$LEASE-"}" != "$n" ]; then echo "${n#"$LEASE-"}"
+  elif [ -n "${PROJECT:-}" ]; then echo "${n#"$PROJECT-"}"
+  else echo "$n"; fi
 }
 
 # remote_wait <name>: follow (or re-attach to) a remote job until it ends; progress every 20 s
@@ -321,6 +360,13 @@ remote_wait() {
   LAST_LOG="$CM_DIR/logs/$name-$(date +%Y%m%d-%H%M).log"
   rsh "[ ! -d /run/cloudmule ] || date +%s > /run/cloudmule/last_active" 2>/dev/null || true   # a job just ended: in use
   rsh "cat $log" 2>/dev/null | tr '\r' '\n' | grep -v '^[[:space:]]*$' > "$LAST_LOG" || true
+  # the job's measurements (this run, and an uncollected previous one) into logs/usage.tsv, each exactly once:
+  # `mv` is atomic, so of a `job` and an `attach` collecting at the same moment only one gets the file
+  rsh "for f in $R/jobs/$name.usage.prev $R/jobs/$name.usage; do
+         mv \"\$f\" \"\$f.\$\$\" 2>/dev/null && cat \"\$f.\$\$\" && rm -f \"\$f.\$\$\"; done; true" 2>/dev/null \
+    | tools usage-add "$(winpath "$USAGE_FILE")" "$USAGE_KEEP_DAYS" "${PROJECT:--}" "${TARGET:-}" "$(job_label "$name")" \
+    || true
+  tools prune-logs "$(winpath "$CM_DIR/logs")" "$LOG_KEEP_DAYS" || true
   if [ "$last" != "EXIT 0" ]; then
     echo "ERROR: '$name' failed ($last). Log: $LAST_LOG" >&2
     tail -20 "$LAST_LOG" >&2 || true

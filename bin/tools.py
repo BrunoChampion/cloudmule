@@ -21,6 +21,11 @@ JSON from `hcloud … -o json` on stdin:
 
 No stdin:
   guide                               the "How to choose" guide printed before the menu
+  usage <usage.tsv> <keep_days> [project] [target]   per project and job: runs, peak RAM, RAM wait, cores, longest
+  prune-logs <logs dir> <keep_days>   deletes job logs (*.log) older than keep_days
+
+Stdin = a server's measurement lines (key=value pairs, see MEASURE in bin/lib.sh):
+  usage-add <usage.tsv> <keep_days> <project> <target> <job>   appends one usage line per measurement
 
 Sync (patterns are space-separated):
   find-prune "<exclude>" "<seeds>"    GNU find arguments that prune excluded directory names (never a seed's parent)
@@ -33,10 +38,12 @@ Extra exclude patterns can live in <local_dir>/.cloudmuleignore (one per line).
 """
 import fnmatch
 import json
+import math
 import os
 import shlex
+import statistics
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def opts(args):
@@ -99,7 +106,8 @@ def texts(why):
 GUIDE = """How to choose (one server, shared by all your projects; billed per started hour while it exists):
 - CPU: shared (CX, CPX) is cheapest, its speed varies with neighbours' load; dedicated (CCX) gives full cores,
   steadier for long renders and builds.
-- RAM: pick what your jobs actually need; more RAM is most of what a bigger server costs.
+- RAM: pick what your jobs actually need (`cloudmule usage` shows what they peaked at); more RAM is most of what
+  a bigger server costs.
 - Disk: the workspace restores only on a disk at least as big as the one it was saved from (the disk floor),
   so a bigger disk than you need raises the floor for every later server.
 - ARM (CAX): cheapest per core, but some modules (ffmpeg) are x86 only.
@@ -274,6 +282,149 @@ def sync_plan(args):
         print("  -", p)
 
 
+# ---------------------------------------------------------------- job usage (logs/usage.tsv)
+# One tab-separated line per finished remote job (raw units; converted when reported):
+USAGE_FIELDS = ("date",       # when it ended, local time, YYYY-MM-DDTHH:MM
+                "project", "target", "job",   # target "-" if none
+                "type",       # server type
+                "seconds",    # duration
+                "peak_mb",    # the job's peak RAM (its cgroup's memory.peak: file cache included)
+                "ram_mb",     # the server's RAM (MemTotal)
+                "cpu_s",      # CPU time of all its processes
+                "vcpus",      # the server's vCPUs
+                "exit",       # exit code
+                "stall_s")    # time its tasks stalled for lack of memory (memory.pressure "some")
+NUMERIC = ("seconds", "peak_mb", "ram_mb", "cpu_s", "vcpus", "exit", "stall_s")
+
+
+def usage_line_ok(u):
+    return all(u[k] == "n/a" or u[k].lstrip("-").isdigit() for k in NUMERIC)
+
+
+def read_usage(path, keep_days, prune=True):
+    """The valid usage lines younger than keep_days. With prune, rewrites the file without the older ones
+    (through a temporary file, so a reader never sees half a file)."""
+    if not os.path.exists(path):
+        return []
+    cutoff = datetime.now() - timedelta(days=keep_days)
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    kept, old = [], 0
+    for line in lines:
+        u = dict(zip(USAGE_FIELDS, line.split("\t")))
+        if len(u) != len(USAGE_FIELDS) or not usage_line_ok(u):
+            continue   # not a usage line (hand-edited, or an older format): ignored, kept in the file
+        try:
+            young = datetime.fromisoformat(u["date"]) >= cutoff
+        except ValueError:
+            continue
+        if young:
+            kept.append(u)
+        else:
+            old += 1
+    if prune and old:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as out:
+            out.write("".join("\t".join(u[k] for k in USAGE_FIELDS) + "\n" for u in kept))
+        os.replace(tmp, path)
+    return kept
+
+
+def scaled(value, divisor):
+    return "n/a" if value in ("", "n/a") else str(round(int(value) / divisor))
+
+
+def usage_add(args):
+    """usage-add <usage.tsv> <keep_days> <project> <target> <job>; stdin: the server's measurement lines
+    (key=value pairs, see MEASURE in bin/lib.sh). Appends one usage line per measurement."""
+    path, keep, project, target, job = args[0], float(args[1]), args[2], args[3] or "-", args[4]
+    out = []
+    for raw in sys.stdin.read().splitlines():
+        m = dict(kv.split("=", 1) for kv in raw.split() if "=" in kv)
+        if not (m.get("start", "").isdigit() and m.get("end", "").isdigit()):
+            continue
+        end = int(m["end"])
+        out.append([datetime.fromtimestamp(end).strftime("%Y-%m-%dT%H:%M"), project, target, job,
+                    m.get("type") or "unknown", str(end - int(m["start"])), scaled(m.get("peak_bytes", ""), 1048576),
+                    scaled(m.get("mem_kb", ""), 1024), scaled(m.get("cpu_usec", ""), 1000000),
+                    m.get("vcpus") or "n/a", m.get("exit") or "n/a", scaled(m.get("stall_usec", ""), 1000000)])
+    if not out:
+        return
+    # appending is what concurrent sessions do; rewriting (dropping old lines) is left to `usage` and to a weekly
+    # catch-up here, so two sessions rarely rewrite and append at the same moment
+    with open(path, "a", encoding="utf-8", newline="\n") as f:
+        f.write("".join("\t".join(line) + "\n" for line in out))
+    with open(path, encoding="utf-8") as f:
+        first = f.readline().split("\t")[0]
+    try:
+        stale = datetime.fromisoformat(first) < datetime.now() - timedelta(days=keep + 7)
+    except ValueError:
+        stale = False
+    if stale:
+        read_usage(path, keep)
+
+
+def usage_report(args):
+    """usage <usage.tsv> <keep_days> [project] [target]: per project and job, runs, highest peak RAM, RAM wait,
+    cores used, longest run, server types."""
+    path, keep = args[0], float(args[1])
+    project, target = (args[2:3] or [""])[0], (args[3:4] or [""])[0]
+    rows = [u for u in read_usage(path, keep)
+            if (not project or u["project"] == project) and (not target or u["target"] == target)]
+    if not rows:
+        print(f"No job usage recorded yet{' for ' + project if project else ''} (last {keep:g} days). Every remote "
+              f"job records one line when it ends.")
+        return
+    jobs = {}
+    for u in rows:
+        jobs.setdefault((u["project"], u["job"]), []).append(u)
+    print(f"Job usage, last {keep:g} days ({path}):")
+    print(f"{'PROJECT':<12}{'JOB':<18}{'RUNS':>5}  {'PEAK RAM':<15}{'RAM WAIT':<10}{'CORES USED':<24}{'LONGEST':<9}TYPES")
+    for (p, j), us in sorted(jobs.items()):
+        longest = f"{max(int(u['seconds']) for u in us) / 60:.0f} min"
+        types = " ".join(sorted({u["type"] for u in us}))
+        print(f"{p:<12}{j:<18}{len(us):>5}  {peak_ram(us):<15}{ram_wait(us):<10}{cores_used(us):<24}{longest:<9}{types}")
+    measured = [u for u in rows if u["peak_mb"] != "n/a"]
+    if measured:
+        top = max(measured, key=lambda u: int(u["peak_mb"]))
+        where = " ".join(x for x in (top["project"], top["target"], top["job"]) if x != "-")
+        print(f"Highest peak RAM: {int(top['peak_mb']) / 1024:.1f} GB ({where}).")
+    print("PEAK RAM includes file cache the kernel frees when needed; RAM WAIT is how long the job stalled for lack")
+    print("of memory: near 0 s means the RAM was enough. Jobs that run at the same time on the shared server add up.")
+
+
+def peak_ram(us):
+    """The highest peak RAM, against the RAM of the server it ran on (nominal GB: MemTotal rounded up)."""
+    measured = [u for u in us if u["peak_mb"] != "n/a"]
+    if not measured:
+        return "n/a"
+    top = max(measured, key=lambda u: int(u["peak_mb"]))
+    server = "?" if top["ram_mb"] == "n/a" else str(math.ceil(int(top["ram_mb"]) / 1024))
+    return f"{int(top['peak_mb']) / 1024:.1f} / {server} GB"
+
+
+def ram_wait(us):
+    stalls = [int(u["stall_s"]) for u in us if u["stall_s"] != "n/a"]
+    return f"{max(stalls)} s" if stalls else "n/a"
+
+
+def cores_used(us):
+    """Average cores used per run (CPU time / duration): typical (median) and highest, against that run's vCPUs."""
+    runs = sorted(((int(u["cpu_s"]) / max(int(u["seconds"]), 1), u["vcpus"]) for u in us if u["cpu_s"] != "n/a"))
+    if not runs:
+        return "n/a"
+    return f"{statistics.median(c for c, _ in runs):.1f} typ, {runs[-1][0]:.1f} max / {runs[-1][1]}"
+
+
+def prune_logs(args):
+    """prune-logs <logs dir> <keep_days>: deletes job logs (*.log) older than keep_days."""
+    folder, cutoff = args[0], datetime.now().timestamp() - float(args[1]) * 86400
+    for name in os.listdir(folder) if os.path.isdir(folder) else []:
+        p = os.path.join(folder, name)
+        if name.endswith(".log") and os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+            os.remove(p)
+
+
 def find_prune(args):
     rules = Rules(args[0], args[1] if len(args) > 1 else "")
     names = [p for p in rules.ex if "/" not in p and not any(fnmatch.fnmatch(d.split("/")[-1], p) for d in rules.seed_dirs)]
@@ -290,6 +441,12 @@ def main():
         return find_prune(args)
     if cmd == "guide":
         return print(GUIDE)
+    if cmd == "usage-add":
+        return usage_add(args)
+    if cmd == "usage":
+        return usage_report(args)
+    if cmd == "prune-logs":
+        return prune_logs(args)
     data = json.load(sys.stdin)
     if cmd == "menu":
         menu(data, opts(args))

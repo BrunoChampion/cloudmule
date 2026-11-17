@@ -16,6 +16,10 @@ owner of the account before running it. Use a small project with one quick job; 
 4. The first start on a new layout installs the missing modules (`/root/cloudmule/mod/…` markers; versioned ones
    under `/opt/<module>/<version>`); a second `start` installs nothing.
 5. `cloudmule job <p> [<t>] <job>` uploads only what changed, runs, and downloads every `CLOUDMULE_RESULT`.
+   `cloudmule usage <p>` then shows that job with a real peak RAM, RAM wait and cores (not `n/a`): the systemd
+   scope, the kernel's `memory.peak` and `memory.pressure` (PSI) work on the server's Ubuntu. `cloudmule leases`
+   during a job shows "jobs running: 1" (not 2 or 3). Run a job whose command fails: its usage line is
+   still recorded, with the exit code.
 6. `cloudmule leases` shows the lease; `cloudmule run <p> [<t>] 'node --version'` uses the project's version.
 7. `cloudmule end <p> [<t>] --keep` creates a snapshot labelled `managed-by=cloudmule, role=workspace,
    scope=shared`, prunes the previous one, and deletes the server; `cloudmule status` shows nothing billing.

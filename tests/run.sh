@@ -37,6 +37,7 @@ check "a clone has no .env, keys/, logs/ or registry/" \
 run help;     check "help works without a token" has "cloudmule servers"
 run status;   check "a Hetzner command without a token asks for it" has "HCLOUD_TOKEN is missing"
 run projects; check "no projects at first" has "no projects yet"
+run usage;    check "usage works without a token, and says nothing is recorded yet" has "No job usage recorded yet"
 
 printf 'HCLOUD_TOKEN=fake-token-for-tests\nSERVER_TYPES="cx53 cpx62"\nLOCATIONS="nbg1 fsn1 hel1"\n' > "$CM_HOME/.env"
 
@@ -173,6 +174,43 @@ check "a running server below the project's needs is reported" has "SERVER_BELOW
 check "joining needs no choice" has "WOULD_JOIN: cloudmule"
 OUT="$(FAKE_HC_SCENARIO=running cm start videos --fresh --dry-run)"
 check "--fresh is refused while the server is running" has "--fresh needs the server to be off"
+echo "== usage (one summary line per job, kept USAGE_KEEP_DAYS; job logs kept LOG_KEEP_DAYS)"
+# usage.tsv lines (tab-separated): date project target job type seconds peak_mb ram_mb cpu_s vcpus exit stall_s
+NOW="$(date +%Y-%m-%dT%H:%M)"
+{ printf '2020-01-01T10:00\tcharlio\t-\ttest\tcpx62\t60\t30000\t32105\t60\t16\t0\t0\n'
+  printf '%s\tcharlio\t-\ttest\tcpx62\t600\t6144\t32105\t1800\t16\t0\t0\n' "$NOW"
+  printf '%s\tcharlio\t-\ttest\tcpx62\t300\t4096\t32105\t300\t16\t0\t2\n' "$NOW"
+  printf '%s\tcharlio\t-\tapp\tcpx62\t120\tn/a\t32105\tn/a\t16\t1\tn/a\n' "$NOW"
+  printf '%s\tvideos\tep-01\trender\tccx33\t1800\t20480\t32105\t12600\t8\t0\t45\n' "$NOW"
+  printf '%s\tvideos\tep-02\trender\tccx33\t900\t10240\t32105\t3600\t8\t0\t0\n' "$NOW"
+  printf 'a line someone edited by hand\n'
+} > "$CM_HOME/logs/usage.tsv"
+touch -t 202001010000 "$CM_HOME/logs/charlio-test-20200101-0000.log"
+touch "$CM_HOME/logs/charlio-test-recent.log"
+run usage
+check "usage succeeds (and ignores a line edited by hand)" test "$RC" = 0
+check "usage counts each job's runs and shows its highest peak RAM against the server's nominal RAM" \
+  bash -c "printf '%s\n' \"\$1\" | grep -E '^charlio +test +2 +6\.0 / 32 GB' >/dev/null" _ "$OUT"
+check "usage shows how long a job waited for memory" bash -c "printf '%s\n' \"\$1\" | grep -E '^charlio +test .* 2 s ' >/dev/null" _ "$OUT"
+check "usage shows typical and highest cores used, against the vCPUs" has "2.0 typ, 3.0 max / 16"
+check "usage shows the longest run" has "10 min"
+check "a job measured without cgroup data shows n/a" bash -c "printf '%s\n' \"\$1\" | grep -E '^charlio +app .*n/a' >/dev/null" _ "$OUT"
+check "usage groups a job's runs across targets" bash -c "printf '%s\n' \"\$1\" | grep -E '^videos +render +2 +20\.0 / 32 GB +45 s' >/dev/null" _ "$OUT"
+check "usage names the highest peak RAM overall" has "Highest peak RAM: 20.0 GB (videos ep-01 render)"
+check "usage explains that peak RAM includes file cache and what RAM WAIT means" has "near 0 s means the RAM was enough"
+check "usage warns that simultaneous jobs add up" has "add up"
+check "lines older than USAGE_KEEP_DAYS are ignored" hasnt "29.3"
+check "lines older than USAGE_KEEP_DAYS are dropped from the file" bash -c "! grep '^2020-' '$CM_HOME/logs/usage.tsv' >/dev/null"
+check "job logs older than LOG_KEEP_DAYS are deleted" test ! -e "$CM_HOME/logs/charlio-test-20200101-0000.log"
+check "recent job logs are kept" test -e "$CM_HOME/logs/charlio-test-recent.log"
+run usage videos
+check "usage <project> shows only that project" \
+  bash -c "printf '%s\n' \"\$1\" | grep render >/dev/null && ! printf '%s\n' \"\$1\" | grep '^charlio' >/dev/null" _ "$OUT"
+run usage videos ep-02
+check "usage <project> <target> shows only that target" bash -c "printf '%s\n' \"\$1\" | grep -E '^videos +render +1 +10\.0' >/dev/null" _ "$OUT"
+run usage nobody
+check "usage of a project with no records says so" has "No job usage recorded yet"
+
 echo "== end --keep (the server cannot be reached: the save must still happen through the API)"
 : > "$WORK/before.log"; cp "$FAKE_HC_LOG" "$WORK/before.log"
 OUT="$(FAKE_HC_SCENARIO=running cm end videos --keep)"
