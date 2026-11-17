@@ -297,7 +297,9 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
       echo "needs no choice; this menu applies the next time the server is created."
     else
       tools guide; echo   # the choice is due now: explain what is being chosen
-      echo "Last choice: $(last_choice) (propose it or another; creating the server always needs the user's yes)"
+      last="$(last_choice)"
+      if [ "$last" = "none yet" ]; then echo "Last choice: none yet (no server was created with a recorded choice)"
+      else echo "Last choice: $last (propose it or another; creating the server always needs the user's yes)"; fi
     fi
     if [ "$FRESH" = 1 ]; then workspace_info --fresh; else workspace_info; fi
     if [ "$FRESH" = 1 ]; then
