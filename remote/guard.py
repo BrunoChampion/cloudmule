@@ -64,10 +64,16 @@ log(f"self-destruct: idle {idle_min:.0f} min (limit {IDLE_MIN:.0f}), up {uptime_
 if MODE == "session":
     try:
         subprocess.run(["sync"])
+        labels = {"managed-by": "cloudmule", "role": "workspace", "scope": "shared"}
+        try:   # keep the user's server choice (chosen-type/-by/-at) on the snapshot, as `end --keep` does
+            own = call("GET", f"/servers/{SID}")["server"].get("labels") or {}
+            labels.update({k: v for k, v in own.items() if k.startswith("chosen-")})
+        except Exception as e:
+            log(f"could not read the server's labels: {e}")
         r = call("POST", f"/servers/{SID}/actions/create_image", {
             "type": "snapshot",
             "description": f"cloudmule workspace {time.strftime('%Y-%m-%d %H:%M')} (auto, guard)",
-            "labels": {"managed-by": "cloudmule", "role": "workspace", "scope": "shared"},
+            "labels": labels,
         })
         aid = r["action"]["id"]
         for _ in range(180):  # up to 30 min

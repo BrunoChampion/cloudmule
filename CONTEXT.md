@@ -16,6 +16,10 @@ _Avoid_: lock, session
 The snapshot of the whole shared server's disk, saved when it is deleted and restored when it is created again; only the latest is kept.
 _Avoid_: image, backup
 
+**Last choice**:
+The server type the user last chose for the shared server, with the project whose conversation chose it and when; recorded on Hetzner, so every agent of every project and computer sees it.
+_Avoid_: preferred types, default server
+
 **Disk floor**:
 The minimum disk size a server must have to restore the workspace: the disk size of the server the workspace was saved from.
 _Avoid_: workspace minimum disk, snapshot lock-in

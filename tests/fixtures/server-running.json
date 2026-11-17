@@ -10,5 +10,11 @@
   "disk": 80,
   "cpu_type": "shared",
   "architecture": "x86"
+ },
+ "labels": {
+  "managed-by": "cloudmule",
+  "chosen-type": "cpx22",
+  "chosen-by": "charlio",
+  "chosen-at": "2026-11-14"
  }
 }

@@ -39,11 +39,12 @@ run status;   check "a Hetzner command without a token asks for it" has "HCLOUD_
 run projects; check "no projects at first" has "no projects yet"
 run usage;    check "usage works without a token, and says nothing is recorded yet" has "No job usage recorded yet"
 
-printf 'HCLOUD_TOKEN=fake-token-for-tests\nSERVER_TYPES="cx53 cpx62"\nLOCATIONS="nbg1 fsn1 hel1"\n' > "$CM_HOME/.env"
+printf 'HCLOUD_TOKEN=fake-token-for-tests\nLOCATIONS="nbg1 fsn1 hel1"\n' > "$CM_HOME/.env"
 
 echo "== setup"
 run setup
 check "setup succeeds" has "SETUP_OK"
+check "setup checks the token and points to the server menu" has "cloudmule servers"
 check "setup registers this computer's key in Hetzner" grep -q '^ssh-key create ' "$FAKE_HC_LOG"
 check "setup writes the location file" bash -c "[ \"\$(cat '$HOME/.config/cloudmule/home')\" = '$CM_HOME' ]"
 if command -v claude >/dev/null 2>&1; then
@@ -56,6 +57,9 @@ fi
 fp="$(ssh-keygen -l -E md5 -f "$CM_HOME/keys/id_ed25519.pub" | awk '{print $2}' | sed 's/^MD5://')"
 OUT="$(FAKE_HC_KEY_FP="$fp" cm setup)"; check "setup again: the registered key matches" has "already registered"
 OUT="$(FAKE_HC_KEY_FP="00:11" cm setup)"; check "setup refuses a same-name key that is not this computer's" has "not this folder's key"
+printf 'SERVER_TYPES="cx53 cpx62"\n' >> "$CM_HOME/.env"; run status
+check "an old SERVER_TYPES in .env is ignored, with a note" has "SERVER_TYPES in"
+sed -e '/^SERVER_TYPES=/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
 
 echo "== init and projects"
 APP="$WORK/my app"; mkdir -p "$APP"; printf '{"name":"x"}\n' > "$APP/package.json"
@@ -110,12 +114,14 @@ check "it shows the disk floor and where it comes from" has "Disk floor: 640 GB"
 check "it says only --fresh lowers the disk floor" has "only --fresh lowers it"
 check "it shows the project's needs and their source" has "RAM >= 8 GB (config)"
 check "it derives the architecture from the modules" has "CPU architecture: x86 (from its MODULES)"
-check "cpx62 fits, with no warning (it keeps the disk floor)" row_plain_fit cpx62
+check "cpx62 fits, with no disk-floor warning" row_has cpx62 "fits (last choice)"
 check "a bigger disk says it raises the disk floor and what is lost" row_has ccx63 "fits; raises disk floor 640 -> 960 GB (1 type lost)"
 check "cx23 does not fit, with the reasons" has "no: ram < 8 GB; below disk floor 640 GB (or --fresh)"
 check "arm types are marked as the wrong architecture" has "arch arm (project needs x86)"
 check "unavailable types are marked" has "unavailable"
 check "it recommends the cheapest fitting type" has "RECOMMENDED: cpx62 hel1 0.2083"
+check "it shows the last choice recorded on Hetzner" has "Last choice: cpx62 (by youtube, 2026-11-14)"
+check "the row of the last choice is marked" row_has cpx62 "fits (last choice)"
 check "it names the cheapest type the disk floor shuts out, with the saving" \
   has "Cheaper with --fresh: cpx32 0.0569 EUR/h (saves 0.1514 EUR/h)"
 check "the escape line says what --fresh costs once" has "lowers the disk floor to 160 GB"
@@ -142,6 +148,7 @@ check "a bigger disk says which disk floor it would set and what is lost" \
 check "even the cheapest type is warned when its disk is bigger than needed" \
   row_has cpx32 "fits; sets disk floor to 160 GB (2 types lost)"
 check "with no workspace there is no escape line" hasnt "Cheaper with --fresh"
+check "with no record of a choice, servers says so" has "Last choice: none yet"
 
 echo "== servers (the server is running: no choice now)"
 OUT="$(FAKE_HC_SCENARIO=running cm servers videos)"
@@ -151,7 +158,13 @@ check "a running server: no escape advice (start would join it)" hasnt "Cheaper 
 
 echo "== start --dry-run"
 run start videos --dry-run
-check "without --type it takes the first fitting preference" has "WOULD_CREATE: cpx62 hel1 1000001 0.2083"
+check "creating the server without --type is refused" bash -c "[ $RC != 0 ]"
+check "the refusal asks for a type" has "NEEDS_SERVER_TYPE"
+check "the refusal names the last choice recorded on Hetzner" has "Last choice: cpx62 (by youtube, 2026-11-14)"
+run start videos --type cpx62 --dry-run
+check "with --type it would create exactly that type" has "WOULD_CREATE: cpx62 hel1 1000001 0.2083"
+check "the server would carry the choice as labels (type, project, date)" \
+  has "WOULD_LABEL: chosen-type=cpx62 chosen-by=videos chosen-at=$(date +%Y-%m-%d)"
 run start videos --type cx23 --dry-run
 check "a type that cannot restore the workspace is refused" bash -c "[ $RC != 0 ]"
 check "the refusal explains why" has "NO_FITTING_SERVER: cx23: ram < 8 GB; below disk floor 640 GB (or --fresh)"
@@ -162,18 +175,30 @@ check "--location picks the location" has "WOULD_CREATE: cpx62 nbg1 1000001"
 run start videos --type cpx62 --location mars1 --dry-run
 check "an unknown location is refused" has "is not in LOCATIONS"
 printf 'SERVER_TYPES="ccx63 cpx62"\n' >> "$VID/.cloudmule/config.sh"
-run start videos --dry-run
-check "the project's SERVER_TYPES overrides .env's" has "WOULD_CREATE: ccx63 hel1"
-OUT="$(SERVER_TYPES="ccx43 cpx62" cm start my-app --fresh --dry-run)"
-check "a setting in the environment wins over .env" has "WOULD_CREATE: ccx43 hel1"
-OUT="$(FAKE_HC_SCENARIO=available cm start my-app --fresh --dry-run)"
-check "when everything is available, the first preference that fits is used" has "WOULD_CREATE: cx53"
+run start videos --type cpx62 --dry-run
+check "an old SERVER_TYPES in a project is ignored, with a note" has "SERVER_TYPES in"
+check "an old SERVER_TYPES does not choose the server" has "WOULD_CREATE: cpx62 hel1"
+OUT="$(LOCATIONS="nbg1" cm servers videos)"
+check "a setting in the environment wins over .env" bash -c "printf '%s\n' \"\$1\" | grep -x 'Locations: nbg1' >/dev/null" _ "$OUT"
+OUT="$(FAKE_HC_SCENARIO=empty cm start my-app --dry-run)"
+check "with no record of a choice, the refusal says so" has "Last choice: none yet"
+mkdir -p "$WORK/trail"; cm init "$WORK/trail" --name trail- >/dev/null
+run start trail- --type cpx62 --dry-run
+check "the chosen-by label is a value Hetzner accepts (alphanumeric at both ends)" has "chosen-by=trail chosen-at="
 OUT="$(FAKE_HC_SCENARIO=running cm start videos --dry-run)"
 check "a running server is joined, with its type" has "already running (203.0.113.10, cpx22"
+check "joining says who chose the running server" has "chosen by charlio on 2026-11-14"
 check "a running server below the project's needs is reported" has "SERVER_BELOW_REQUIREMENTS: ram < 8 GB"
 check "joining needs no choice" has "WOULD_JOIN: cloudmule"
 OUT="$(FAKE_HC_SCENARIO=running cm start videos --fresh --dry-run)"
 check "--fresh is refused while the server is running" has "--fresh needs the server to be off"
+
+echo "== oneshot (creates the server only with --type)"
+run oneshot videos example
+check "oneshot without --type is refused" has "NEEDS_SERVER_TYPE"
+check "oneshot without --type never asks Hetzner to create a server" bash -c "! grep '^server create ' '$FAKE_HC_LOG' >/dev/null"
+run oneshot videos --type cx23 example
+check "oneshot reads --type before the job name" has "NO_FITTING_SERVER: cx23"
 echo "== usage (one summary line per job, kept USAGE_KEEP_DAYS; job logs kept LOG_KEEP_DAYS)"
 # usage.tsv lines (tab-separated): date project target job type seconds peak_mb ram_mb cpu_s vcpus exit stall_s
 NOW="$(date +%Y-%m-%dT%H:%M)"
@@ -218,6 +243,8 @@ NEW="$(tail -n +"$(( $(wc -l < "$WORK/before.log") + 1 ))" "$FAKE_HC_LOG")"
 calls() { printf '%s\n' "$NEW" | grep -E "$1" >/dev/null; }
 check "end --keep snapshots the server with cloudmule's labels" \
   calls '^server create-image --type snapshot .*--label managed-by=cloudmule --label role=workspace --label scope=shared cloudmule$'
+check "end --keep copies the choice onto the snapshot" \
+  calls '^server create-image .*--label chosen-type=cpx22 --label chosen-by=charlio --label chosen-at=2026-11-14 '
 check "end --keep keeps only the newest workspace snapshot" calls '^image delete 1000001$'
 check "end --keep does not delete the newest snapshot" bash -c "! printf '%s\n' \"\$1\" | grep -q '^image delete 1000002'" _ "$NEW"
 check "end --keep deletes the server" calls '^server delete cloudmule$'

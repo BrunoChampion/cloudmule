@@ -4,5 +4,12 @@
  "description": "cloudmule workspace (test fixture)",
  "disk_size": 640,
  "image_size": 27.5,
- "architecture": "x86"
+ "architecture": "x86",
+ "labels": {
+  "managed-by": "cloudmule",
+  "role": "workspace",
+  "chosen-type": "cpx62",
+  "chosen-by": "youtube",
+  "chosen-at": "2026-11-14"
+ }
 }

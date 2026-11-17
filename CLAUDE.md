@@ -20,7 +20,7 @@ Do it step by step, explaining each one in plain words, and stop at anything tha
    project (a dedicated one for cloudmule is best), then Security → API tokens → Generate, **Read & Write**.
    Then `cp .env.example .env` and ask the user to paste the token into `.env` **themselves**. Never ask for it in
    the chat, never print it.
-3. `bash bin/cloudmule setup`: checks the token, shows prices, creates this computer's SSH key and registers it
+3. `bash bin/cloudmule setup`: checks the token, creates this computer's SSH key and registers it
    in Hetzner, saves this folder's location in `~/.config/cloudmule/home` and installs the Claude Code plugin
    (the `cloudmule` skill). Tell the user the skill appears in **new** Claude Code sessions.
 4. Done. Explain the next step: in any project, ask for heavy work ("run the tests") or say "set up cloudmule
@@ -30,10 +30,11 @@ Do it step by step, explaining each one in plain words, and stop at anything tha
 ## Rules (mandatory)
 
 - **Spending money needs the user's choice and confirmation.** Before `start` or `oneshot` creates a server,
-  show the user the options from `servers <project>` (free), recommend one, and wait for their choice; then
-  `start … --type <chosen>`. Joining a running server needs no new choice. With a session open, `sync`, `job`,
-  `attach`, `pull`, `run` and `tunnel` need no new confirmation; neither do `servers`, `status`, `leases`,
-  `projects`, `init`, `setup`, `end` and `start --dry-run`.
+  show the user the options from `servers <project>` (free), with their last choice, recommend one, and wait for
+  their choice; then `start … --type <chosen>` (or `oneshot … --type <chosen> <job>`). No setting picks a type:
+  creating without `--type` is refused. Joining a running server needs no new choice. With a session open, `sync`,
+  `job`, `attach`, `pull`, `run` and `tunnel` need no new confirmation; neither do `servers`, `status`, `leases`,
+  `projects`, `init`, `setup`, `end`, `usage` and `start --dry-run`.
 - **Report the server type and price** used (the "Creating … EUR/h" line).
 - **When done: `end <project> [target] --keep`, then `status`.** `end` releases your project's lease and only
   deletes the server if no other project holds one. Don't leave leases behind "just in case".
@@ -63,11 +64,11 @@ Run from any folder: `bash <cloudmule-folder>/bin/cloudmule …` (the skill find
 
 | Command | What it does | Bills? |
 |---|---|---|
-| `setup` | Once per computer: token, prices, SSH key, location file, Claude Code plugin | No |
+| `setup` | Once per computer: token check, SSH key, location file, Claude Code plugin | No |
 | `init [folder] [--name n] [--local]` | Sets up a project (creates `.cloudmule/` from `template/`) or registers one that already has it | No |
 | `projects` | Projects registered on this computer and their folders | No |
-| `servers [proj] [target] [--fresh]` | With no server running, a "How to choose" guide first. Then the disk floor, and the server types available now: vCPU, RAM, disk, CPU kind, architecture, cheapest location, €/h, whether each fits the project (and why not) and what it would do to the disk floor. A `Cheaper with --fresh` line when the disk floor shuts out a cheaper type. Last line `RECOMMENDED: <type> <location> <eur/h>` | No |
-| `start <proj> [target] [--type t] [--location l] [--fresh] [--dry-run]` | Joins the server (prints its type; `SERVER_BELOW_REQUIREMENTS` if it is smaller than the project needs) or creates it with the chosen type from the workspace snapshot (or plain Ubuntu), installs missing modules, runs `server-setup.sh`, syncs, installs dependencies, takes a lease. `--fresh`: ignore the saved workspace. `--dry-run`: print `WOULD_CREATE: <type> <location> <image> <eur/h>` (or `WOULD_JOIN`) and stop | **Yes, if it creates it** |
+| `servers [proj] [target] [--fresh]` | With no server running, a "How to choose" guide first. Then the disk floor, and the server types available now: vCPU, RAM, disk, CPU kind, architecture, cheapest location, €/h, whether each fits the project (and why not) and what it would do to the disk floor. A `Cheaper with --fresh` line when the disk floor shuts out a cheaper type. The user's `Last choice:` (from Hetzner labels; its row is marked). Last line `RECOMMENDED: <type> <location> <eur/h>` | No |
+| `start <proj> [target] [--type t] [--location l] [--fresh] [--dry-run]` | Joins the server (prints its type and who chose it; `SERVER_BELOW_REQUIREMENTS` if it is smaller than the project needs) or creates it with the chosen type (`--type` required to create: `NEEDS_SERVER_TYPE` otherwise; recorded as the last choice) from the workspace snapshot (or plain Ubuntu), installs missing modules, runs `server-setup.sh`, syncs, installs dependencies, takes a lease. `--fresh`: ignore the saved workspace. `--dry-run`: print `WOULD_CREATE: <type> <location> <image> <eur/h>` and `WOULD_LABEL: …` (or `WOULD_JOIN`) and stop | **Yes, if it creates it** |
 | `sync <proj> [target] [--with-generated]` | Uploads only what changed and deletes there what was deleted here | — |
 | `job <proj> [target] <job> [args…]` | Syncs, runs `.cloudmule/jobs/<job>.sh` on the server and **downloads its results** | — |
 | `attach <proj> [target] <job>` | Follows a job still running there and downloads its results | — |
@@ -75,7 +76,7 @@ Run from any folder: `bash <cloudmule-folder>/bin/cloudmule …` (the skill find
 | `run <proj> [target] ['cmd']` | A command in the project's remote folder, or an interactive shell | — |
 | `tunnel <proj> [target] <port>` | `http://localhost:<port>` here reaches `127.0.0.1:<port>` on the server (to look at something a job serves, without exposing it). Ctrl+C closes it; while open it counts as activity | — |
 | `end <proj> [target] [--keep] [--forget] [--force]` | Releases the lease. If no other remains: (`--keep` → workspace snapshot) and deletes the server. `--forget`: deletes the project's folder on the server. `--force`: deletes even with other leases (only with confirmation) | Stops billing |
-| `oneshot <proj> [target] <job> [args…]` | One job: uses the server if it is on; otherwise creates it and deletes it at the end if nobody else uses it (also on failure) | Yes, if it creates it |
+| `oneshot <proj> [target] [--type t] [--location l] <job> [args…]` | One job: uses the server if it is on; otherwise creates it (`--type` required) and deletes it at the end if nobody else uses it (also on failure) | Yes, if it creates it |
 | `leases` | Who is using the server, since when, which jobs run | No |
 | `status` | Servers (billed hours), leases and snapshots | No |
 | `usage [proj] [target]` | Per project and job: runs, highest peak RAM, RAM wait (stalled for lack of memory), typical and highest cores used, longest run, server types (from `logs/usage.tsv`; works without a token) | No |
@@ -102,8 +103,8 @@ on the server each target lives in `/root/work/<project>/<target>`.
   folder to download (paths without spaces).
 - `<LOCAL_DIR>/.cloudmuleignore` adds sync exclusions, one pattern per line.
 - `MIN_RAM_GB`, `MIN_CPUS`, `MIN_DISK_GB` (defaults 4 / 2 / 40) say what server the project needs; the
-  architecture comes from its modules (each module declares `# arch: x86 arm`; ffmpeg is x86 only). Optional
-  `SERVER_TYPES` is the project's preference order, overriding `.env`'s.
+  architecture comes from its modules (each module declares `# arch: x86 arm`; ffmpeg is x86 only). A project never
+  picks the server type: the user does, for the shared server (an old `SERVER_TYPES` is ignored with a note).
 
 ## How it works
 
@@ -130,7 +131,9 @@ the scope could not be created (the job then runs unmeasured).
 **Server type:** the user chooses it. `servers` reads the API's server types (`server-type list`: cores, memory,
 disk, `cpu_type`, `architecture`, `prices[]`, `locations[].available`) and checks each against the project's
 requirements and the saved workspace. `start --type` creates exactly that type, in the cheapest allowed location
-(or `--location`). Without `--type`, `SERVER_TYPES` is tried in order, keeping only types that fit.
+(or `--location`); creating without `--type` is refused. The choice is recorded on Hetzner as labels
+(`chosen-type`, `chosen-by` = project, `chosen-at` = date) on the server, copied onto the workspace snapshot by
+`end --keep` and by the guard: the **last choice** every agent sees (`servers`, `start`'s refusal and join line).
 **A snapshot restores only on a disk at least as large as the disk it was taken from** (Hetzner answers
 "image disk is bigger than server type disk"; verified 2026-11-14), so the disk of the server the workspace was
 saved from is the **disk floor** for every later server (`CONTEXT.md`); `--fresh` starts from plain Ubuntu, and

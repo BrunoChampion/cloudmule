@@ -34,8 +34,9 @@ current project is the one whose folder contains the working directory.
 ## 3. Run heavy work
 
 1. **Choose the server, with the user.** Check `status`. If the server is already running, skip to step 2:
-   `start` just joins it (no choice, no new cost decision); tell the user its type, and if `start` prints
-   `SERVER_BELOW_REQUIREMENTS`, tell them what is missing and let them decide. If no server is running:
+   `start` just joins it (no choice, no new cost decision); tell the user its type and who chose it, and if
+   `start` prints `SERVER_BELOW_REQUIREMENTS`, tell them what is missing and let them decide. If no server is
+   running:
    - Run `servers <project> [target]` (free). Its output is the source of truth for the choice: relay it in
      plain words, in the user's language, in this order:
      1. The "How to choose" guide, briefly, with the measured needs from `usage <project>` (free): its highest
@@ -44,9 +45,12 @@ current project is the one whose folder contains the working directory.
      3. A short table of the types marked `fits`: type, vCPU, RAM, CPU kind, €/h, and each row's disk-floor
         note (`raises disk floor …` / `sets disk floor …`, with the types lost).
      4. The `Cheaper with --fresh` line whenever it appears: the saving per hour against the one-time cost.
-     5. The `RECOMMENDED` line. If it says `none`, explain why and what could change it.
-   - **Wait for the user's choice.** Never pick for them, and never create a server without that choice.
-2. `start <project> [target] --type <chosen>` creates (or joins) the server. Add `--dry-run` first if the user
+     5. The `Last choice` (the user's, from any project or computer) and the `RECOMMENDED` line: propose one of
+        them. If `RECOMMENDED` says `none`, explain why and what could change it.
+   - **Wait for the user's choice**, also when it repeats the last one: every creation needs their yes.
+2. `start <project> [target] --type <chosen>` creates (or joins) the server; `--type` is required to create, and
+   it becomes the last choice every agent sees. For a single job, `oneshot <project> [target] --type <chosen>
+   <job>` does the same choice, runs the job and deletes the server if nobody else uses it. Add `--dry-run` first if the user
    wants to see exactly what would be created. Report the type and price from the "Creating … EUR/h" line. With
    the server running, `job`, `sync`, `run`, `pull` and `attach` need no new confirmation.
 3. `job <project> [target] <job> [args…]` uploads what changed, runs `.cloudmule/jobs/<job>.sh` on the server

@@ -11,8 +11,9 @@ owner of the account before running it. Use a small project with one quick job; 
    (Verified 2026-11-14: rejected with "image disk is bigger than server type disk", nothing billed.)
    If Hetzner ever accepts it, delete that server at once (`hcloud server delete cloudmule-disk-rule-check`) and drop
    the disk floor (`below disk floor`) from the server menu.
-3. `cloudmule start <p> [<t>] --type <chosen> --dry-run` prints `WOULD_CREATE` with that type; then without
-   `--dry-run`: the "Creating … EUR/h" line matches; the cost guard is armed.
+3. `cloudmule start <p> [<t>] --type <chosen> --dry-run` prints `WOULD_CREATE` with that type and `WOULD_LABEL`;
+   then without `--dry-run`: the "Creating … EUR/h" line matches; the cost guard is armed; `hcloud server describe
+   cloudmule` shows the `chosen-type/-by/-at` labels.
 4. The first start on a new layout installs the missing modules (`/root/cloudmule/mod/…` markers; versioned ones
    under `/opt/<module>/<version>`); a second `start` installs nothing.
 5. `cloudmule job <p> [<t>] <job>` uploads only what changed, runs, and downloads every `CLOUDMULE_RESULT`.
@@ -28,5 +29,7 @@ session mode with `IDLE_MINUTES=10`) snapshotted with the right labels and delet
 idleness from its last 5-minute look instead of the last command; fixed by having every command mark the
 server as used. Step 7's API sequence is covered by `tests/run.sh`.
 
-8. Cost guard, once per release: `cloudmule oneshot` a job, close the local process mid-way, and confirm the
-   server deletes itself after `ONESHOT_IDLE_MINUTES` (the guard's snapshot labels are the same as in step 7).
+8. Cost guard, once per release: `cloudmule oneshot <p> --type <chosen> <job>`, close the local process mid-way,
+   and confirm the server deletes itself after `ONESHOT_IDLE_MINUTES`. In session mode (`IDLE_MINUTES=10 cloudmule
+   start …`) the guard's snapshot carries the same labels as step 7's, `chosen-*` included (`cloudmule servers`
+   then shows that last choice).

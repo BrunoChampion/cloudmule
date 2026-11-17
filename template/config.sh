@@ -28,8 +28,6 @@ MODULES="node@24.15.0"
 # MIN_RAM_GB=8      # e.g. "the test suite runs 4 browsers in parallel"
 # MIN_CPUS=4
 # MIN_DISK_GB=80
-# Preferred server types for this project, in order (overrides cloudmule's .env), e.g. "cpx42 ccx23".
-# SERVER_TYPES="cpx42 ccx23"
 
 # Never uploaded (space-separated). Without "/" = any file or folder with that name; with "/" = that exact path.
 SYNC_EXCLUDE="node_modules .git .env .env.* dist build .next .expo __pycache__ .venv *.log"

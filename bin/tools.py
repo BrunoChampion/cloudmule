@@ -1,7 +1,7 @@
 """Helpers for bin/cloudmule (run with `python -I`).
 
 JSON from `hcloud … -o json` on stdin:
-  menu [requirements] [--no-escape]   server types table for the user: fit verdict + reason, price, location; fitting
+  menu [requirements] [--no-escape] [--last-choice <type>]  server types table for the user: fit verdict + reason, price, location; fitting
                                       rows with a bigger disk than the disk floor (or, with no workspace, than the
                                       smallest fitting disk) say what they would do to it; a "Cheaper with --fresh"
                                       line when the disk floor shuts out a cheaper type (unless --no-escape); last line
@@ -12,9 +12,9 @@ JSON from `hcloud … -o json` on stdin:
   image-info                          an image (describe JSON): "<disk_size GB> <architecture>"
   server-type                         a server (describe JSON): "<type>, <vCPU> / <RAM> / <disk> <cpu kind>"
   server-disk                         a server (describe JSON): "<disk GB> <architecture>"
+  choice [--type|--who|--labels]      a server or snapshot (describe JSON): the user's server choice in its labels
   requirements: --locations "<l…>" --min-ram <GB> --min-cpus <n> --min-disk <GB> --archs "<x86 arm>"
                 --workspace-disk <GB> --workspace-arch <x86|arm>   (a snapshot restores only on a disk >= its own)
-  price "<locations>"                 hourly gross price of one server type per location
   field <name> | label <key>          one field / one label of a JSON object
   ages                                servers: name, status, hours up, hours billed
   overdue <hours>                     names of servers older than <hours>
@@ -114,6 +114,25 @@ GUIDE = """How to choose (one server, shared by all your projects; billed per st
 - The saved workspace costs cents per GB per month: negligible next to server hours."""
 
 
+CHOICE_KEYS = ("chosen-type", "chosen-by", "chosen-at")   # labels of the user's server choice (bin/lib.sh)
+
+
+def choice(data, form):
+    """The server choice recorded in a server's or snapshot's labels. form: "" -> "<type> (by <p>, <date>)" or
+    "none yet"; --type -> the type or ""; --who -> "<p> on <date>" or ""; --labels -> "k=v k=v k=v" or ""."""
+    labels = data.get("labels") or {}
+    c = {k: labels.get(k, "") for k in CHOICE_KEYS}
+    if not c["chosen-type"]:
+        return "none yet" if not form else ""
+    if form == "--type":
+        return c["chosen-type"]
+    if form == "--who":
+        return f"{c['chosen-by'] or '?'} on {c['chosen-at'] or '?'}"
+    if form == "--labels":
+        return " ".join(f"{k}={v}" for k, v in c.items() if v)
+    return f"{c['chosen-type']} (by {c['chosen-by'] or '?'}, {c['chosen-at'] or '?'})"
+
+
 def evaluate(t, r):
     price = {p["location"]: float(p["price_hourly"]["gross"]) for p in t.get("prices", []) if p["location"] in r.locs}
     avail = sorted((l["name"] for l in t.get("locations", []) if l.get("available") and l["name"] in price),
@@ -165,7 +184,8 @@ def menu(data, o):
     print(f"{'TYPE':<8}{'VCPU':>5}{'RAM':>8}{'DISK':>9}  {'CPU':<10}{'ARCH':<6}{'LOCATION':<10}{'EUR/H':>8}  VERDICT")
     for e in rows:
         t = e["t"]
-        verdict = "no: " + texts(e["why"]) if e["why"] else "fits" + floor_note(e, ref, rows, r)
+        mark = " (last choice)" if t["name"] == o.get("last-choice") else ""
+        verdict = "no: " + texts(e["why"]) if e["why"] else "fits" + floor_note(e, ref, rows, r) + mark
         loc = e["best"] if e["avail"] else "-"
         print(f"{t['name']:<8}{t['cores']:>5}{gb(t['memory']) + ' GB':>8}{str(t['disk']) + ' GB':>9}  "
               f"{t['cpu_type']:<10}{t['architecture']:<6}{loc:<10}{eur(e):>8.4f}  {verdict}")
@@ -457,16 +477,12 @@ def main():
     elif cmd == "server-type":
         t = data["server_type"]
         print(f"{t['name']}, {t['cores']} vCPU / {gb(t['memory'])} GB / {t['disk']} GB {t['cpu_type']}")
+    elif cmd == "choice":
+        print(choice(data, args[0] if args else ""))
     elif cmd == "server-disk":
         print(f"{data['server_type']['disk']} {data['server_type']['architecture']}")
     elif cmd == "image-info":
         print(f"{int(float(data['disk_size']))} {data['architecture']}")
-    elif cmd == "price":
-        locs = set(args[0].split()) if args else set()
-        for p in data.get("prices", []):
-            if not locs or p["location"] in locs:
-                print(f"  {data['name']} in {p['location']}: {float(p['price_hourly']['gross']):.4f} EUR/h incl. VAT "
-                      f"({data['cores']} vCPU, {data['memory']:.0f} GB RAM, {data['disk']} GB disk)")
     elif cmd == "field":
         print(data[args[0]])
     elif cmd == "label":

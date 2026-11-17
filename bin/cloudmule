@@ -9,9 +9,11 @@
 #                                                   out of git (local exclude) instead of noting it in CLAUDE.md
 #   cloudmule projects                              projects registered on this computer
 #   cloudmule servers [project] [target] [--fresh]  the server types you can rent now, whether each fits the
-#                                                   project and why not, prices; ends with RECOMMENDED (no cost)
+#                                                   project and why not, prices, the user's last choice; ends with
+#                                                   RECOMMENDED (no cost)
 #   cloudmule start   <project> [target] [--type t] [--location l] [--fresh] [--dry-run]
-#                                                   join the server, or create it (--type: the one the user chose;
+#                                                   join the server, or create it (--type: the one the user chose,
+#                                                   required to create; recorded on Hetzner as the last choice;
 #                                                   --fresh: ignore the saved workspace; --dry-run: only show what it
 #                                                   would create); install what the project needs, run its setup,
 #                                                   sync, install deps, take a lease
@@ -27,8 +29,9 @@
 #                                                   delete the server (--keep: snapshot it first). --forget: delete
 #                                                   this project's folder on the server. --force: delete even with
 #                                                   other leases
-#   cloudmule oneshot <project> [target] <job> [args…]  one job; creates the server only if it is off and deletes
-#                                                   it at the end if nobody else is using it
+#   cloudmule oneshot <project> [target] [--type t] [--location l] [--fresh] <job> [args…]
+#                                                   one job; creates the server only if it is off (then --type is
+#                                                   required) and deletes it at the end if nobody else is using it
 #   cloudmule leases                                who is using the server (and for how long, running jobs)
 #   cloudmule status                                what exists and therefore bills: server, leases, snapshots
 #   cloudmule usage   [project] [target]            what each job used (peak RAM, cores, time), measured on every
@@ -52,22 +55,42 @@ take_project() {
   REST=("$@")
 }
 
-CHOSEN_TYPE=""; CHOSEN_LOCATION=""; FRESH=0; DRY_RUN=0   # set by start's options
+CHOSEN_TYPE=""; CHOSEN_LOCATION=""; FRESH=0; DRY_RUN=0   # set by start's and oneshot's options
+
+# create_options <args…>: reads the leading --type/--location/--fresh/--dry-run options into CHOSEN_TYPE etc.;
+# what follows them stays in REST (oneshot: the job and its arguments)
+create_options() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --type) CHOSEN_TYPE="${2:?--type needs a server type}"; shift 2 ;;
+      --location) CHOSEN_LOCATION="${2:?--location needs a location}"; shift 2 ;;
+      --fresh) FRESH=1; shift ;;
+      --dry-run) DRY_RUN=1; shift ;;
+      *) break ;;
+    esac
+  done
+  REST=("$@")
+  if [ -n "$CHOSEN_LOCATION" ]; then
+    case " $LOCATIONS " in *" $CHOSEN_LOCATION "*) ;; *) die "location '$CHOSEN_LOCATION' is not in LOCATIONS ($LOCATIONS)" ;; esac
+  fi
+}
 
 # server_report: the running server's type; SERVER_BELOW_REQUIREMENTS if it is below this project's needs (not
 # refused: other projects may be using it, and it cannot change size meanwhile)
 server_report() {
   local json below
   json="$(hc server describe "$SERVER" -o json)"
-  echo "The server $SERVER is already running ($IP, $(printf '%s' "$json" | tools server-type)): joining it."
+  local who; who="$(printf '%s' "$json" | tools choice --who)"
+  echo "The server $SERVER is already running ($IP, $(printf '%s' "$json" | tools server-type)${who:+, chosen by $who}): joining it."
   [ -n "${PROJECT:-}" ] || return 0
   WS_DISK=""; WS_ARCH=""; reqs_args
   below="$(printf '%s' "$json" | tools below "${REQS[@]}")"
   [ -z "$below" ] || echo "SERVER_BELOW_REQUIREMENTS: $below (it is shared: it cannot change size while other projects use it)"
 }
 
-# up_server <mode>: join the shared server, or create it (type from CHOSEN_TYPE or SERVER_TYPES, filtered by what
-# fits the project and the saved workspace). Sets IP and CREATED. With DRY_RUN=1 it only says what it would do.
+# up_server <mode>: join the shared server, or create it with the type the user chose (CHOSEN_TYPE, from --type;
+# refused if it does not fit the project or the saved workspace). The choice goes on the server as labels, so every
+# agent sees it (last_choice). Sets IP and CREATED. With DRY_RUN=1 it only says what it would do.
 up_server() {
   CREATED=0
   local img t loc eur
@@ -81,9 +104,13 @@ up_server() {
   fi
   if [ "$FRESH" = 1 ]; then workspace_info --fresh; else workspace_info; fi
   img="${WS_IMAGE:-$BASE_IMAGE}"
+  [ -n "$CHOSEN_TYPE" ] || die "NEEDS_SERVER_TYPE: creating the shared server needs the type the user chooses.
+Show the options (cloudmule servers $PROJECT${TARGET:+ $TARGET}), wait for the user's choice, then add --type <type>.
+Last choice: $(last_choice)"
   choose_candidates
   read -r t loc eur <<< "$(printf '%s\n' "$CANDS" | head -1)"
-  if [ "$DRY_RUN" = 1 ]; then echo "WOULD_CREATE: $t $loc $img $eur"; exit 0; fi
+  choice_labels
+  if [ "$DRY_RUN" = 1 ]; then echo "WOULD_CREATE: $t $loc $img $eur"; echo "WOULD_LABEL: ${CHOICE_LABELS[*]}"; exit 0; fi
   if [ -n "$WS_IMAGE" ]; then
     echo "Restoring the shared workspace (snapshot $WS_IMAGE, needs a disk >= $WS_DISK GB)."
   elif [ "$FRESH" = 1 ] && [ -n "$(latest_image "$WORKSPACE_SEL")" ]; then
@@ -93,7 +120,7 @@ up_server() {
     echo "No workspace snapshot yet: starting from $BASE_IMAGE (the first start installs everything)."
     echo "Note: later restores of this server's snapshot need a disk at least as large as this one's."
   fi
-  create_server "$SERVER" "$CANDS" "$img" "mode=$1" scope=shared
+  create_server "$SERVER" "$CANDS" "$img" "mode=$1" scope=shared "${CHOICE_LABELS[@]}"
   wait_ssh || { delete_server "$SERVER"; exit 1; }
   CREATED=1
   if [ "$1" = session ]; then arm_guard session "$IDLE_MINUTES" "$SESSION_MAX_HOURS"
@@ -133,9 +160,12 @@ finish_server() {
   if [ "$keep" = 1 ]; then
     echo "Saving the shared workspace…"
     rsh "rm -rf $R/leases; sync" 2>/dev/null || true
+    # the snapshot keeps the user's server choice, so it is still known once the server is gone
+    local kv choice=()
+    for kv in $(hc server describe "$SERVER" -o json | tools choice --labels); do choice+=(--label "$kv"); done
     hc server shutdown --wait --wait-timeout 120s "$SERVER" >/dev/null || hc server poweroff "$SERVER" >/dev/null
     hc server create-image --type snapshot --description "cloudmule workspace $(date '+%Y-%m-%d %H:%M')" \
-      --label "$LABEL" --label role=workspace --label scope=shared "$SERVER" >/dev/null
+      "${choice[@]+"${choice[@]}"}" --label "$LABEL" --label role=workspace --label scope=shared "$SERVER" >/dev/null
     prune_images "$WORKSPACE_SEL"
   fi
   delete_server "$SERVER"
@@ -174,8 +204,9 @@ EOF
 
 case "$CMD" in
   setup)
-    echo "== Token and prices =="
-    for t in $SERVER_TYPES; do hc server-type describe "$t" -o json | tools price "$LOCATIONS"; done
+    echo "== Token =="
+    hc server-type list -o json >/dev/null || die "Hetzner refused the token in $CM_DIR/.env (it needs Read & Write)"
+    echo "The token works. Server types and prices: cloudmule servers [project] (free; you choose the server)."
     echo "== This computer's SSH key =="
     [ -f "$KEY" ] || { ssh-keygen -q -t ed25519 -N "" -C "cloudmule" -f "$KEY"; echo "Key created in keys/."; }
     mine="$(ssh-keygen -l -E md5 -f "$KEY.pub" | awk '{print $2}' | sed 's/^MD5://')"
@@ -261,10 +292,12 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     running=""
     if server_exists "$SERVER"; then
       running="$(hc server describe "$SERVER" -o json)"
-      echo "Running now: $SERVER ($(printf '%s' "$running" | tools server-type)). Joining it needs no choice;"
-      echo "this menu applies the next time the server is created."
+      who="$(printf '%s' "$running" | tools choice --who)"
+      echo "Running now: $SERVER ($(printf '%s' "$running" | tools server-type)${who:+, chosen by $who}). Joining it"
+      echo "needs no choice; this menu applies the next time the server is created."
     else
       tools guide; echo   # the choice is due now: explain what is being chosen
+      echo "Last choice: $(last_choice) (propose it or another; creating the server always needs the user's yes)"
     fi
     if [ "$FRESH" = 1 ]; then workspace_info --fresh; else workspace_info; fi
     if [ "$FRESH" = 1 ]; then
@@ -284,29 +317,20 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     fi
     if [ -n "${PROJECT:-}" ]; then
       echo "Project $PROJECT needs: RAM >= $MIN_RAM_GB GB ($RAM_SRC), vCPU >= $MIN_CPUS ($CPUS_SRC), disk >= $MIN_DISK_GB GB ($DISK_SRC),"
-      echo "  CPU architecture: ${PROJECT_ARCHS:-none} (from its MODULES). Preferred types: $SERVER_TYPES ($TYPES_SRC)."
+      echo "  CPU architecture: ${PROJECT_ARCHS:-none} (from its MODULES)."
     fi
     echo "Locations: $LOCATIONS"
     reqs_args
     # no escape advice while a server runs (start would join it) or without a project (no real needs to meet)
     escape=(); [ -z "$running" ] && [ -n "${PROJECT:-}" ] || escape=(--no-escape)
-    hc server-type list -o json | tools menu "${REQS[@]}" "${escape[@]+"${escape[@]}"}"
+    # the last choice is marked only when a choice is due (no server running)
+    mark=(); [ -n "$running" ] || mark=(--last-choice "$(last_choice --type)")
+    hc server-type list -o json | tools menu "${REQS[@]}" "${escape[@]+"${escape[@]}"}" "${mark[@]+"${mark[@]}"}"
     ;;
 
   start)
-    take_project "$@"; set -- "${REST[@]+"${REST[@]}"}"
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --type) CHOSEN_TYPE="${2:?--type needs a server type}"; shift 2 ;;
-        --location) CHOSEN_LOCATION="${2:?--location needs a location}"; shift 2 ;;
-        --fresh) FRESH=1; shift ;;
-        --dry-run) DRY_RUN=1; shift ;;
-        *) die "unknown option: $1" ;;
-      esac
-    done
-    if [ -n "$CHOSEN_LOCATION" ]; then
-      case " $LOCATIONS " in *" $CHOSEN_LOCATION "*) ;; *) die "location '$CHOSEN_LOCATION' is not in LOCATIONS ($LOCATIONS)" ;; esac
-    fi
+    take_project "$@"; create_options "${REST[@]+"${REST[@]}"}"
+    [ ${#REST[@]} = 0 ] || die "unknown option: ${REST[0]}"
     up_server session
     prepare_project
     echo "START_OK: $PROJECT ${TARGET:-} on the server $SERVER ($IP)"
@@ -366,8 +390,9 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     ;;
 
   oneshot)
-    take_project "$@"; set -- "${REST[@]+"${REST[@]}"}"
+    take_project "$@"; create_options "${REST[@]+"${REST[@]}"}"; set -- "${REST[@]+"${REST[@]}"}"
     [ $# -ge 1 ] || die "missing the job name"
+    [ "$DRY_RUN" = 0 ] || die "oneshot has no --dry-run (use: cloudmule start … --type <t> --dry-run)"
     SYNC_EXCLUDE="$SYNC_EXCLUDE ${ONESHOT_EXCLUDE:-}"
     up_server oneshot
     finish() { lease_drop; finish_server 0 0; }

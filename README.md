@@ -82,11 +82,13 @@ cloudmule usage my-app            # what each job used (peak RAM, cores, time), 
 
 - **Servers:** you choose the size each time one is created: `cloudmule servers` shows every type available now
   that fits your project (from 2 vCPU / 4 GB at about €0.01/h to 48 vCPU / 192 GB), shared or dedicated CPUs,
-  with prices. Billed per started hour while the server exists.
-- **Choose your first server's disk with care:** a saved workspace only restores on a disk at least as large as
-  the one it came from. `cloudmule start … --fresh` starts over from a clean system when you want to go smaller.
+  with prices and your last choice (recorded on Hetzner, so every project sees it). Billed per started hour while
+  the server exists. No setting picks a server for you.
+- **Mind the disk floor:** a saved workspace only restores on a disk at least as large as the one it came from;
+  `cloudmule servers` shows which choices raise it. `cloudmule start … --fresh` starts over from a clean system
+  when you want to go smaller.
 - **Snapshots:** about €0.01 per GB per month for the saved workspace (dependencies and caches make it grow).
-- See Hetzner's current prices; `cloudmule setup` prints them.
+- `cloudmule usage` shows what each job really used (peak RAM, cores), to pick the size with evidence.
 
 ## Security
 

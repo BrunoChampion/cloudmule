@@ -4,7 +4,7 @@ set -euo pipefail
 
 CM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # settings given in the environment win over .env (e.g. IDLE_MINUTES=10 cloudmule start …)
-CM_SETTINGS='SERVER_TYPES|LOCATIONS|IDLE_MINUTES|SESSION_MAX_HOURS|ONESHOT_IDLE_MINUTES|ONESHOT_MAX_HOURS|BASE_IMAGE|SERVER_NAME|LOG_KEEP_DAYS|USAGE_KEEP_DAYS'
+CM_SETTINGS='LOCATIONS|IDLE_MINUTES|SESSION_MAX_HOURS|ONESHOT_IDLE_MINUTES|ONESHOT_MAX_HOURS|BASE_IMAGE|SERVER_NAME|LOG_KEEP_DAYS|USAGE_KEEP_DAYS'
 CM_FROM_ENV="$(env | grep -E "^($CM_SETTINGS)=" || true)"
 if [ -f "$CM_DIR/.env" ]; then set -a; . "$CM_DIR/.env"; set +a; fi
 while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$CM_FROM_ENV"
@@ -15,7 +15,13 @@ fi
 export HCLOUD_TOKEN="${HCLOUD_TOKEN:-}"
 
 # ---------------------------------------------------------------- settings (override in .env)
-SERVER_TYPES=${SERVER_TYPES:-"cx53 cpx62"}       # preference order; first available wins
+# No setting chooses the server: the user does, each time it is created (start/oneshot --type), and the choice is
+# recorded on Hetzner (last_choice). An old SERVER_TYPES is only reported.
+if [ -n "${SERVER_TYPES:-}" ]; then
+  echo "NOTE: SERVER_TYPES in $CM_DIR/.env (or the environment) is ignored: the server is chosen with the user" \
+       "each time it is created (cloudmule servers). You can delete that line." >&2
+fi
+unset SERVER_TYPES
 LOCATIONS=${LOCATIONS:-"nbg1 fsn1 hel1"}
 IDLE_MINUTES=${IDLE_MINUTES:-45}                  # session: snapshot + delete after this long idle
 SESSION_MAX_HOURS=${SESSION_MAX_HOURS:-8}
@@ -96,8 +102,10 @@ load_project() {
   NEEDS_TARGET=0; LOCAL_DIR=""; REMOTE_DIR=""; MODULES=""; SYNC_EXCLUDE=""; SYNC_SEEDS=""; ONESHOT_EXCLUDE=""
   INSTALL_CMD=""; INSTALL_TRIGGERS=""; INSTALL_CHECK=""; PROJECT_NAME=""
   MIN_RAM_GB=""; MIN_CPUS=""; MIN_DISK_GB=""
-  local env_types="$SERVER_TYPES"; SERVER_TYPES=""
+  local SERVER_TYPES=""   # only to notice an old setting in config.sh
   . "$PROJECT_DIR/config.sh"
+  [ -z "$SERVER_TYPES" ] || echo "NOTE: SERVER_TYPES in $PROJECT_DIR/config.sh is ignored: the server is chosen with" \
+    "the user each time it is created (cloudmule servers). You can delete that line." >&2
   if [ "$NEEDS_TARGET" = 1 ]; then
     [ -n "$TARGET" ] || die "project '$PROJECT' needs a target (e.g. ${TARGET_EXAMPLE:-<target>})"
     [[ "$TARGET" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid target '$TARGET'"
@@ -119,7 +127,6 @@ load_project() {
   RAM_SRC=config; [ -n "$MIN_RAM_GB" ] || { MIN_RAM_GB=4; RAM_SRC=default; }
   CPUS_SRC=config; [ -n "$MIN_CPUS" ] || { MIN_CPUS=2; CPUS_SRC=default; }
   DISK_SRC=config; [ -n "$MIN_DISK_GB" ] || { MIN_DISK_GB=40; DISK_SRC=default; }
-  TYPES_SRC=project; [ -n "$SERVER_TYPES" ] || { SERVER_TYPES="$env_types"; TYPES_SRC=.env; }
   PROJECT_ARCHS="$(module_archs base $MODULES)"
   LEASE="$PROJECT${TARGET:+--$TARGET}"   # this project's claim on the shared server
   # versioned modules (node@24.15.0) live in /opt/<module>/<version>: put this project's versions first on PATH
@@ -170,7 +177,7 @@ module_archs() {
 # no_project_reqs: requirements when no project is given (only the saved workspace limits the choice)
 no_project_reqs() {
   MIN_RAM_GB=0; MIN_CPUS=0; MIN_DISK_GB=0; PROJECT_ARCHS="x86 arm"
-  RAM_SRC=none; CPUS_SRC=none; DISK_SRC=none; TYPES_SRC=.env
+  RAM_SRC=none; CPUS_SRC=none; DISK_SRC=none
 }
 
 # workspace_info [--fresh]: WS_IMAGE/WS_DISK/WS_ARCH of the saved workspace snapshot (empty if none or --fresh).
@@ -189,13 +196,34 @@ reqs_args() {
         --min-disk "$MIN_DISK_GB" --archs "$PROJECT_ARCHS" --workspace-disk "${WS_DISK:-0}" --workspace-arch "${WS_ARCH:-}")
 }
 
-# choose_candidates: "type location eur" lines to try, from CHOSEN_TYPE (the user's choice) or SERVER_TYPES,
-# keeping only types that fit the project and the saved workspace
+# choose_candidates: "type location eur" lines to try for CHOSEN_TYPE (the user's choice), cheapest location
+# first; refused if it does not fit the project and the saved workspace
 choose_candidates() {
-  local types="${CHOSEN_TYPE:-$SERVER_TYPES}"
   reqs_args
-  CANDS="$(hc server-type list -o json | tools candidates --types "$types" "${REQS[@]}")" \
-    || die "none of [$types] can be used now (reason above). See the options: cloudmule servers ${PROJECT:-}${TARGET:+ $TARGET}"
+  CANDS="$(hc server-type list -o json | tools candidates --types "$CHOSEN_TYPE" "${REQS[@]}")" \
+    || die "$CHOSEN_TYPE cannot be used now (reason above). See the options: cloudmule servers ${PROJECT:-}${TARGET:+ $TARGET}"
+}
+
+# ---------------------------------------------------------------- the user's server choice (labels on Hetzner)
+# The server is created with chosen-type / chosen-by / chosen-at labels, and the workspace snapshot copies them,
+# so every agent of every project and computer sees the last choice, with the server running or not.
+# choice_labels: CHOICE_LABELS for a server created now with CHOSEN_TYPE for PROJECT (values Hetzner accepts)
+choice_labels() {
+  # Hetzner label values: up to 63 of [A-Za-z0-9._-], alphanumeric at both ends
+  local by; by="$(printf '%s' "${PROJECT:-none}" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-63 \
+    | sed -e 's/^[^A-Za-z0-9]*//' -e 's/[^A-Za-z0-9]*$//')"
+  by="${by:-unknown}"
+  CHOICE_LABELS=("chosen-type=$CHOSEN_TYPE" "chosen-by=$by" "chosen-at=$(date +%Y-%m-%d)")
+}
+
+# last_choice [--type]: "<type> (by <project>, <date>)" (or only the type) from the running server, else from the
+# saved workspace; "none yet" (empty with --type) when neither carries the labels
+last_choice() {
+  local json="" img
+  if server_exists "$SERVER"; then json="$(hc server describe "$SERVER" -o json)"
+  else img="$(latest_image "$WORKSPACE_SEL")"; [ -z "$img" ] || json="$(hc image describe "$img" -o json)"; fi
+  if [ -z "$json" ]; then [ "${1:-}" = --type ] || echo "none yet"; return 0; fi
+  printf '%s' "$json" | tools choice ${1:+"$1"}
 }
 
 # create_server <name> <candidates> <image> <label...>: tries each "type location eur" line in order
