@@ -95,32 +95,65 @@ cm init "$VID" --name videos >/dev/null
 sed -e 's/^MODULES=.*/MODULES="node@24.15.0 ffmpeg chrome-libs"/' -e 's/^# MIN_RAM_GB=8 .*/MIN_RAM_GB=8   # renders/' \
   "$VID/.cloudmule/config.sh" > "$WORK/c" && mv "$WORK/c" "$VID/.cloudmule/config.sh"
 
+row() { printf '%s\n' "$OUT" | grep -E "^$1 " ; }   # the table row of one server type
+row_has() { row "$1" | grep -F -- "$2" >/dev/null; }
+row_plain_fit() { row "$1" | grep -E ' fits$' >/dev/null; }   # fits, with no disk-floor warning
+
 echo "== servers (saved workspace from a 640 GB disk)"
 run servers videos
 check "servers succeeds" test "$RC" = 0
-check "it shows the workspace's disk limit" has "restores only on a disk >= 640 GB"
+check "with no server running, it starts with the guide to choosing" has "How to choose"
+check "the guide covers shared and dedicated CPUs" has "dedicated (CCX)"
+check "the guide explains the disk floor" has "raises the floor for every later server"
+check "it shows the disk floor and where it comes from" has "Disk floor: 640 GB"
+check "it says only --fresh lowers the disk floor" has "only --fresh lowers it"
 check "it shows the project's needs and their source" has "RAM >= 8 GB (config)"
 check "it derives the architecture from the modules" has "CPU architecture: x86 (from its MODULES)"
-check "cpx62 fits" bash -c "printf '%s\n' \"\$1\" | grep -E '^cpx62 .* fits$' >/dev/null" _ "$OUT"
-check "cx23 does not fit, with the reasons" has "no: ram < 8 GB; workspace needs disk >= 640 GB (or --fresh)"
+check "cpx62 fits, with no warning (it keeps the disk floor)" row_plain_fit cpx62
+check "a bigger disk says it raises the disk floor and what is lost" row_has ccx63 "fits; raises disk floor 640 -> 960 GB (1 type lost)"
+check "cx23 does not fit, with the reasons" has "no: ram < 8 GB; below disk floor 640 GB (or --fresh)"
 check "arm types are marked as the wrong architecture" has "arch arm (project needs x86)"
 check "unavailable types are marked" has "unavailable"
 check "it recommends the cheapest fitting type" has "RECOMMENDED: cpx62 hel1 0.2083"
+check "it names the cheapest type the disk floor shuts out, with the saving" \
+  has "Cheaper with --fresh: cpx32 0.0569 EUR/h (saves 0.1514 EUR/h)"
+check "the escape line says what --fresh costs once" has "lowers the disk floor to 160 GB"
 run servers videos --fresh
-check "servers --fresh ignores the workspace" has "Saved workspace: ignored (--fresh)"
+check "servers --fresh ignores the workspace" has "Disk floor: none (--fresh ignores the saved workspace)"
 check "servers --fresh recommends a smaller server" has "RECOMMENDED: cpx32 hel1"
+check "servers --fresh has no escape line" hasnt "Cheaper with --fresh"
 run servers
 check "servers without a project applies no project needs" bash -c "! printf '%s' \"\$1\" | grep -q 'Project ' " _ "$OUT"
 check "servers without a project still recommends" has "RECOMMENDED: cpx62"
+check "servers without a project gives no escape advice (no real needs to meet)" hasnt "Cheaper with --fresh"
+BIG="$WORK/big"; mkdir -p "$BIG"; cm init "$BIG" --name big >/dev/null
+printf 'MIN_RAM_GB=32\nMODULES="ffmpeg"\n' >> "$BIG/.cloudmule/config.sh"
+run servers big
+check "nothing cheaper shut out by the disk floor: no escape line" hasnt "Cheaper with --fresh"
+
+echo "== servers (no workspace yet: this choice sets the disk floor)"
 OUT="$(FAKE_HC_SCENARIO=empty cm servers videos)"
-check "with no snapshot, it warns that the first disk limits later restores" has "Saved workspace: none yet"
+check "with no workspace, it says the server created now sets the disk floor" has "the server you create now sets the disk floor"
+check "no row warns about losing nothing" hasnt "(0 types lost)"
+check "the smallest fitting disk (ccx13, 80 GB) carries no warning" row_plain_fit ccx13
+check "a bigger disk says which disk floor it would set and what is lost" \
+  row_has cpx42 "fits; sets disk floor to 320 GB (5 types lost)"
+check "even the cheapest type is warned when its disk is bigger than needed" \
+  row_has cpx32 "fits; sets disk floor to 160 GB (2 types lost)"
+check "with no workspace there is no escape line" hasnt "Cheaper with --fresh"
+
+echo "== servers (the server is running: no choice now)"
+OUT="$(FAKE_HC_SCENARIO=running cm servers videos)"
+check "a running server: no guide" hasnt "How to choose"
+check "a running server: the next disk floor is its own disk" has "Disk floor next time: 80 GB"
+check "a running server: no escape advice (start would join it)" hasnt "Cheaper with --fresh"
 
 echo "== start --dry-run"
 run start videos --dry-run
 check "without --type it takes the first fitting preference" has "WOULD_CREATE: cpx62 hel1 1000001 0.2083"
 run start videos --type cx23 --dry-run
 check "a type that cannot restore the workspace is refused" bash -c "[ $RC != 0 ]"
-check "the refusal explains why" has "NO_FITTING_SERVER: cx23: ram < 8 GB; workspace needs disk >= 640 GB (or --fresh)"
+check "the refusal explains why" has "NO_FITTING_SERVER: cx23: ram < 8 GB; below disk floor 640 GB (or --fresh)"
 run start videos --type cpx42 --fresh --dry-run
 check "--fresh allows a smaller type, from plain Ubuntu" has "WOULD_CREATE: cpx42 hel1 ubuntu-24.04"
 run start videos --type cpx62 --location nbg1 --dry-run

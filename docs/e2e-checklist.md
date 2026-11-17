@@ -10,7 +10,7 @@ owner of the account before running it. Use a small project with one quick job; 
    whose disk is smaller than the workspace's> --image <workspace snapshot id> --location <loc>` must be rejected.
    (Verified 2026-11-14: rejected with "image disk is bigger than server type disk", nothing billed.)
    If Hetzner ever accepts it, delete that server at once (`hcloud server delete cloudmule-disk-rule-check`) and drop
-   the `workspace needs disk` reason from the server menu.
+   the disk floor (`below disk floor`) from the server menu.
 3. `cloudmule start <p> [<t>] --type <chosen> --dry-run` prints `WOULD_CREATE` with that type; then without
    `--dry-run`: the "Creating … EUR/h" line matches; the cost guard is armed.
 4. The first start on a new layout installs the missing modules (`/root/cloudmule/mod/…` markers; versioned ones

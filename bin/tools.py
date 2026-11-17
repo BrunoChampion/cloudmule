@@ -1,19 +1,26 @@
 """Helpers for bin/cloudmule (run with `python -I`).
 
 JSON from `hcloud … -o json` on stdin:
-  menu [requirements] [--running <type>]   server types table for the user: fit verdict + reason, price, location;
-                                      last line "RECOMMENDED: <type> <location> <eur/h>" (or "RECOMMENDED: none")
+  menu [requirements] [--no-escape]   server types table for the user: fit verdict + reason, price, location; fitting
+                                      rows with a bigger disk than the disk floor (or, with no workspace, than the
+                                      smallest fitting disk) say what they would do to it; a "Cheaper with --fresh"
+                                      line when the disk floor shuts out a cheaper type (unless --no-escape); last line
+                                      "RECOMMENDED: <type> <location> <eur/h>" (or "RECOMMENDED: none")
   candidates --types "<t…>" [requirements]  fitting (type, location, EUR/h) in the given order, cheapest available
                                       location first; none fits -> "NO_FITTING_SERVER: <reasons>" on stderr, exit 3
   below [requirements]                a server (describe JSON): why it is below the requirements (empty if not)
   image-info                          an image (describe JSON): "<disk_size GB> <architecture>"
   server-type                         a server (describe JSON): "<type>, <vCPU> / <RAM> / <disk> <cpu kind>"
+  server-disk                         a server (describe JSON): "<disk GB> <architecture>"
   requirements: --locations "<l…>" --min-ram <GB> --min-cpus <n> --min-disk <GB> --archs "<x86 arm>"
                 --workspace-disk <GB> --workspace-arch <x86|arm>   (a snapshot restores only on a disk >= its own)
   price "<locations>"                 hourly gross price of one server type per location
   field <name> | label <key>          one field / one label of a JSON object
   ages                                servers: name, status, hours up, hours billed
   overdue <hours>                     names of servers older than <hours>
+
+No stdin:
+  guide                               the "How to choose" guide printed before the menu
 
 Sync (patterns are space-separated):
   find-prune "<exclude>" "<seeds>"    GNU find arguments that prune excluded directory names (never a seed's parent)
@@ -63,52 +70,103 @@ class Reqs:
         self.locs = str(o.get("locations") or "").split()
 
 
+FLOOR = "floor"   # the reason kind of "this type's disk is below the disk floor"
+
+
 def fit_reasons(t, r):
-    """Why server type t does not meet the requirements (hardware + saved workspace), ignoring availability."""
+    """Why server type t does not meet the requirements (hardware + saved workspace), ignoring availability:
+    a list of (kind, text); kind FLOOR marks the disk floor, the only reason --fresh removes by itself."""
     why = []
     if float(t["memory"]) < r.ram:
-        why.append(f"ram < {gb(r.ram)} GB")
+        why.append(("ram", f"ram < {gb(r.ram)} GB"))
     if int(t["cores"]) < r.cpus:
-        why.append(f"cpus < {r.cpus}")
+        why.append(("cpus", f"cpus < {r.cpus}"))
     if int(t["disk"]) < r.disk:
-        why.append(f"disk < {r.disk} GB")
+        why.append(("disk", f"disk < {r.disk} GB"))
     if t["architecture"] not in r.archs:
-        why.append(f"arch {t['architecture']} (project needs {'/'.join(r.archs) or 'nothing available'})")
+        why.append(("arch", f"arch {t['architecture']} (project needs {'/'.join(r.archs) or 'nothing available'})"))
     if r.ws_disk and int(t["disk"]) < r.ws_disk:
-        why.append(f"workspace needs disk >= {r.ws_disk} GB (or --fresh)")
+        why.append((FLOOR, f"below disk floor {r.ws_disk} GB (or --fresh)"))
     if r.ws_arch and t["architecture"] != r.ws_arch:
-        why.append(f"workspace is {r.ws_arch} (or --fresh)")
+        why.append(("ws-arch", f"workspace is {r.ws_arch} (or --fresh)"))
     return why
+
+
+def texts(why):
+    return "; ".join(text for _, text in why)
+
+
+GUIDE = """How to choose (one server, shared by all your projects; billed per started hour while it exists):
+- CPU: shared (CX, CPX) is cheapest, its speed varies with neighbours' load; dedicated (CCX) gives full cores,
+  steadier for long renders and builds.
+- RAM: pick what your jobs actually need; more RAM is most of what a bigger server costs.
+- Disk: the workspace restores only on a disk at least as big as the one it was saved from (the disk floor),
+  so a bigger disk than you need raises the floor for every later server.
+- ARM (CAX): cheapest per core, but some modules (ffmpeg) are x86 only.
+- The saved workspace costs cents per GB per month: negligible next to server hours."""
 
 
 def evaluate(t, r):
     price = {p["location"]: float(p["price_hourly"]["gross"]) for p in t.get("prices", []) if p["location"] in r.locs}
     avail = sorted((l["name"] for l in t.get("locations", []) if l.get("available") and l["name"] in price),
                    key=lambda l: price[l])
-    why = fit_reasons(t, r) + ([] if avail else ["unavailable"])
+    why = fit_reasons(t, r) + ([] if avail else [("unavailable", "unavailable")])
     best = avail[0] if avail else (min(price, key=price.get) if price else "")
     return {"t": t, "price": price, "avail": avail, "why": why, "best": best}
+
+
+def eur(e):
+    return e["price"][e["best"]]
+
+
+def disk(e):
+    return int(e["t"]["disk"])
+
+
+def floor_note(e, ref, rows, r):
+    """Verdict suffix for a fitting row whose disk is above the reference (the disk floor, or the smallest fitting
+    disk when there is no workspace): the floor it would leave and how many available types that shuts out."""
+    arch = e["t"]["architecture"]
+    lost = sum(1 for x in rows if x["avail"] and x["t"]["architecture"] == arch and ref <= disk(x) < disk(e))
+    if not lost:   # nothing available would be lost: no warning
+        return ""
+    what = f"raises disk floor {ref} -> {disk(e)} GB" if r.ws_disk else f"sets disk floor to {disk(e)} GB"
+    return f"; {what} ({lost} type{'' if lost == 1 else 's'} lost)"
+
+
+def escape_line(rows, fit):
+    """The cheapest available type kept out only by the disk floor, when it beats the recommendation."""
+    shut_out = sorted((e for e in rows if e["avail"] and e["why"] and all(k == FLOOR for k, _ in e["why"])), key=eur)
+    if not shut_out or (fit and eur(shut_out[0]) >= eur(fit[0])):
+        return
+    e = shut_out[0]
+    saves = f" (saves {eur(fit[0]) - eur(e):.4f} EUR/h)" if fit else " (nothing fits without it)"
+    print(f"Cheaper with --fresh: {e['t']['name']} {eur(e):.4f} EUR/h{saves}. One-time cost: every project")
+    print(f"  uploads and installs again on the first start; the next end --keep lowers the disk floor to "
+          f"{disk(e)} GB.")
 
 
 def menu(data, o):
     r = Reqs(o)
     rows = [evaluate(t, r) for t in data if not t.get("deprecated")]
     rows = [e for e in rows if e["price"]]   # offered in at least one allowed location
-    rows.sort(key=lambda e: (bool(e["why"]), "unavailable" in e["why"], e["price"][e["best"]]))
+    rows.sort(key=lambda e: (bool(e["why"]), any(k == "unavailable" for k, _ in e["why"]), eur(e)))
+    fit = [e for e in rows if not e["why"]]
+    # the disk floor each choice is compared with: the saved workspace's, or the smallest disk that fits
+    ref = r.ws_disk or (min(disk(e) for e in fit) if fit else 0)
     print(f"{'TYPE':<8}{'VCPU':>5}{'RAM':>8}{'DISK':>9}  {'CPU':<10}{'ARCH':<6}{'LOCATION':<10}{'EUR/H':>8}  VERDICT")
     for e in rows:
         t = e["t"]
-        verdict = "fits" if not e["why"] else "no: " + "; ".join(e["why"])
+        verdict = "no: " + texts(e["why"]) if e["why"] else "fits" + floor_note(e, ref, rows, r)
         loc = e["best"] if e["avail"] else "-"
         print(f"{t['name']:<8}{t['cores']:>5}{gb(t['memory']) + ' GB':>8}{str(t['disk']) + ' GB':>9}  "
-              f"{t['cpu_type']:<10}{t['architecture']:<6}{loc:<10}{e['price'][e['best']]:>8.4f}  {verdict}")
-    print("CPU: shared = cheaper, speed varies with neighbours' load; dedicated = full cores, steadier for long "
-          "CPU-bound work (renders, big builds). Prices include VAT, per started hour.")
-    fit = [e for e in rows if not e["why"]]
+              f"{t['cpu_type']:<10}{t['architecture']:<6}{loc:<10}{eur(e):>8.4f}  {verdict}")
+    print("Prices include VAT, per started hour.")
     print(f"{len(fit)} of {len(rows)} server types fit this project right now.")
+    if not o.get("no-escape"):
+        escape_line(rows, fit)
     if fit:
-        e = fit[0]
-        print(f"RECOMMENDED: {e['t']['name']} {e['best']} {e['price'][e['best']]:.4f}")
+        print(f"RECOMMENDED: {fit[0]['t']['name']} {fit[0]['best']} {eur(fit[0]):.4f}")
     else:
         print("RECOMMENDED: none (nothing available fits; lower the project's MIN_* settings, try other LOCATIONS, "
               "or --fresh if the saved workspace is the limit)")
@@ -125,7 +183,7 @@ def candidates(data, o):
             continue
         e = evaluate(t, r)
         if e["why"]:
-            why.append(f"{name}: " + "; ".join(e["why"]))
+            why.append(f"{name}: " + texts(e["why"]))
             continue
         out += [f"{name} {loc} {e['price'][loc]:.4f}" for loc in e["avail"]]
     if not out:
@@ -230,16 +288,20 @@ def main():
         return sync_plan(args)
     if cmd == "find-prune":
         return find_prune(args)
+    if cmd == "guide":
+        return print(GUIDE)
     data = json.load(sys.stdin)
     if cmd == "menu":
         menu(data, opts(args))
     elif cmd == "candidates":
         candidates(data, opts(args))
     elif cmd == "below":
-        print("; ".join(fit_reasons(data["server_type"], Reqs(opts(args)))))
+        print(texts(fit_reasons(data["server_type"], Reqs(opts(args)))))
     elif cmd == "server-type":
         t = data["server_type"]
         print(f"{t['name']}, {t['cores']} vCPU / {gb(t['memory'])} GB / {t['disk']} GB {t['cpu_type']}")
+    elif cmd == "server-disk":
+        print(f"{data['server_type']['disk']} {data['server_type']['architecture']}")
     elif cmd == "image-info":
         print(f"{int(float(data['disk_size']))} {data['architecture']}")
     elif cmd == "price":

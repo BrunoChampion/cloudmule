@@ -36,12 +36,14 @@ current project is the one whose folder contains the working directory.
 1. **Choose the server, with the user.** Check `status`. If the server is already running, skip to step 2:
    `start` just joins it (no choice, no new cost decision); tell the user its type, and if `start` prints
    `SERVER_BELOW_REQUIREMENTS`, tell them what is missing and let them decide. If no server is running:
-   - Run `servers <project> [target]` (free). Show the user a short table of the types marked `fits`: type,
-     vCPU, RAM, CPU kind (shared/dedicated), €/h and location, plus the `RECOMMENDED` line and one sentence on
-     the trade-off (shared is cheaper; dedicated is steadier for long CPU-bound work; more RAM costs more).
-   - If the menu says the saved workspace limits the choice (`workspace needs disk >= N GB`), explain it in
-     plain words and that `--fresh` allows smaller servers at the cost of uploading and installing everything
-     again once. If `RECOMMENDED: none`, explain why and what could change it.
+   - Run `servers <project> [target]` (free). Its output is the source of truth for the choice: relay it in
+     plain words, in the user's language, in this order:
+     1. The "How to choose" guide, briefly.
+     2. The **disk floor**: its current value, or that this choice sets it.
+     3. A short table of the types marked `fits`: type, vCPU, RAM, CPU kind, €/h, and each row's disk-floor
+        note (`raises disk floor …` / `sets disk floor …`, with the types lost).
+     4. The `Cheaper with --fresh` line whenever it appears: the saving per hour against the one-time cost.
+     5. The `RECOMMENDED` line. If it says `none`, explain why and what could change it.
    - **Wait for the user's choice.** Never pick for them, and never create a server without that choice.
 2. `start <project> [target] --type <chosen>` creates (or joins) the server. Add `--dry-run` first if the user
    wants to see exactly what would be created. Report the type and price from the "Creating … EUR/h" line. With

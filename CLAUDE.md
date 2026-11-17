@@ -66,7 +66,7 @@ Run from any folder: `bash <cloudmule-folder>/bin/cloudmule …` (the skill find
 | `setup` | Once per computer: token, prices, SSH key, location file, Claude Code plugin | No |
 | `init [folder] [--name n] [--local]` | Sets up a project (creates `.cloudmule/` from `template/`) or registers one that already has it | No |
 | `projects` | Projects registered on this computer and their folders | No |
-| `servers [proj] [target] [--fresh]` | The server types available now: vCPU, RAM, disk, CPU kind, architecture, cheapest location, €/h, and whether each fits the project (and why not). Last line `RECOMMENDED: <type> <location> <eur/h>` | No |
+| `servers [proj] [target] [--fresh]` | With no server running, a "How to choose" guide first. Then the disk floor, and the server types available now: vCPU, RAM, disk, CPU kind, architecture, cheapest location, €/h, whether each fits the project (and why not) and what it would do to the disk floor. A `Cheaper with --fresh` line when the disk floor shuts out a cheaper type. Last line `RECOMMENDED: <type> <location> <eur/h>` | No |
 | `start <proj> [target] [--type t] [--location l] [--fresh] [--dry-run]` | Joins the server (prints its type; `SERVER_BELOW_REQUIREMENTS` if it is smaller than the project needs) or creates it with the chosen type from the workspace snapshot (or plain Ubuntu), installs missing modules, runs `server-setup.sh`, syncs, installs dependencies, takes a lease. `--fresh`: ignore the saved workspace. `--dry-run`: print `WOULD_CREATE: <type> <location> <image> <eur/h>` (or `WOULD_JOIN`) and stop | **Yes, if it creates it** |
 | `sync <proj> [target] [--with-generated]` | Uploads only what changed and deletes there what was deleted here | — |
 | `job <proj> [target] <job> [args…]` | Syncs, runs `.cloudmule/jobs/<job>.sh` on the server and **downloads its results** | — |
@@ -124,9 +124,9 @@ disk, `cpu_type`, `architecture`, `prices[]`, `locations[].available`) and check
 requirements and the saved workspace. `start --type` creates exactly that type, in the cheapest allowed location
 (or `--location`). Without `--type`, `SERVER_TYPES` is tried in order, keeping only types that fit.
 **A snapshot restores only on a disk at least as large as the disk it was taken from** (Hetzner answers
-"image disk is bigger than server type disk"; verified 2026-11-14), so the size of the
-first server limits later choices; `--fresh` starts from plain Ubuntu, and the next `end --keep` replaces the
-saved workspace. Shared CPUs (CX, CPX) are cheaper; dedicated (CCX) give full cores for long CPU-bound work.
+"image disk is bigger than server type disk"; verified 2026-11-14), so the disk of the server the workspace was
+saved from is the **disk floor** for every later server (`CONTEXT.md`); `--fresh` starts from plain Ubuntu, and
+the next `end --keep` replaces the saved workspace. Shared CPUs (CX, CPX) are cheaper; dedicated (CCX) give full cores for long CPU-bound work.
 
 **Cost guard, on the server:** a systemd timer runs `remote/guard.py` every 5 min and deletes the server after
 `IDLE_MINUTES` without activity (session 45, oneshot 20) or `SESSION_MAX_HOURS`/`ONESHOT_MAX_HOURS` up (8 / 3).

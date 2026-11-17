@@ -256,23 +256,39 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
   servers)
     if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then take_project "$@"; set -- "${REST[@]+"${REST[@]}"}"; else no_project_reqs; fi
     for a in "$@"; do case "$a" in --fresh) FRESH=1 ;; *) die "unknown option: $a" ;; esac; done
+    running=""
     if server_exists "$SERVER"; then
-      echo "Running now: $SERVER ($(hc server describe "$SERVER" -o json | tools server-type)). Joining it needs no choice;"
+      running="$(hc server describe "$SERVER" -o json)"
+      echo "Running now: $SERVER ($(printf '%s' "$running" | tools server-type)). Joining it needs no choice;"
       echo "this menu applies the next time the server is created."
+    else
+      tools guide; echo   # the choice is due now: explain what is being chosen
     fi
     if [ "$FRESH" = 1 ]; then workspace_info --fresh; else workspace_info; fi
-    if [ -n "$WS_IMAGE" ]; then
-      echo "Saved workspace: snapshot $WS_IMAGE ($WS_ARCH, from a $WS_DISK GB disk): it restores only on a disk >= $WS_DISK GB."
-      echo "  --fresh ignores it (smaller servers become possible; every project uploads and installs again)."
-    elif [ "$FRESH" = 1 ]; then echo "Saved workspace: ignored (--fresh)."
-    else echo "Saved workspace: none yet (the first server's disk size will limit later restores)."; fi
+    if [ "$FRESH" = 1 ]; then
+      echo "Disk floor: none (--fresh ignores the saved workspace): the next server created sets it."
+    elif [ -n "$running" ]; then
+      # the next workspace will be saved from the running server: its disk is the next disk floor
+      read -r WS_DISK WS_ARCH <<< "$(printf '%s' "$running" | tools server-disk)"
+      echo "Disk floor next time: $WS_DISK GB, once the running server saves the workspace (end --keep, or the cost"
+      echo "  guard when idle)."
+    elif [ -n "$WS_IMAGE" ]; then
+      echo "Disk floor: $WS_DISK GB (the workspace, snapshot $WS_IMAGE, $WS_ARCH, was saved from a $WS_DISK GB disk)."
+      echo "  A bigger disk raises it for every later server; only --fresh lowers it (every project then uploads and"
+      echo "  installs again)."
+    else
+      echo "No workspace yet: the server you create now sets the disk floor (every later server needs a disk at least"
+      echo "  as big)."
+    fi
     if [ -n "${PROJECT:-}" ]; then
       echo "Project $PROJECT needs: RAM >= $MIN_RAM_GB GB ($RAM_SRC), vCPU >= $MIN_CPUS ($CPUS_SRC), disk >= $MIN_DISK_GB GB ($DISK_SRC),"
       echo "  CPU architecture: ${PROJECT_ARCHS:-none} (from its MODULES). Preferred types: $SERVER_TYPES ($TYPES_SRC)."
     fi
     echo "Locations: $LOCATIONS"
     reqs_args
-    hc server-type list -o json | tools menu "${REQS[@]}"
+    # no escape advice while a server runs (start would join it) or without a project (no real needs to meet)
+    escape=(); [ -z "$running" ] && [ -n "${PROJECT:-}" ] || escape=(--no-escape)
+    hc server-type list -o json | tools menu "${REQS[@]}" "${escape[@]+"${escape[@]}"}"
     ;;
 
   start)
