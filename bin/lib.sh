@@ -537,8 +537,10 @@ cloud_name() {
 gpu_refusals() {
   job_script "$1" >/dev/null
   [ "$NEEDS_GPU" != 0 ] || die "NO_GPU_NEEDED: $PROJECT_DIR/config.sh says NEEDS_GPU=0 (CPU work runs on the Hetzner server); set NEEDS_GPU=graphics or cuda there if this work needs a GPU"
+  # unset: the pod would not know whether to prepare Chrome + Vulkan, and a silent software fallback burns the cap
+  [ -n "$NEEDS_GPU" ] || die "NEEDS_GPU_UNSET: $PROJECT_DIR/config.sh does not say what GPU work this is: ask the user, then write NEEDS_GPU=graphics (WebGL/Vulkan in Chrome) or NEEDS_GPU=cuda there"
   [ -n "$GPU_CHOICE" ] || die "NEEDS_GPU_CHOICE: show the options (cloudmule gpus $PROJECT${TARGET:+ $TARGET}), wait for the user's choice, then add --gpu <id>[,<id>…] (last choice: $(last_gpu))"
-  [ "$GPU_CLOUD" = SECURE ] || die "NO_PUBLIC_SSH: COMMUNITY pods have no public SSH; only --cloud secure can be used"
+  [ "$GPU_CLOUD" = SECURE ] || die "NO_FITTING_GPU: COMMUNITY pods have no public SSH; only --cloud secure can be used"
   case " $(module_archs base $(gpu_modules)) " in *" x86 "*) ;;
     *) die "NO_FITTING_GPU: GPU pods are x86, but a module in MODULES is not ($MODULES)" ;; esac
   [ "$DRY_RUN" = 1 ] || [ "$RUNPOD_STANDING_APPROVAL" = 1 ] || [ "$APPROVED" = 1 ] || die "NEEDS_APPROVAL: show the user the GPU, its price and worst case (cloudmule gpus $PROJECT${TARGET:+ $TARGET}), wait for their yes, then add --approved (or the user sets RUNPOD_STANDING_APPROVAL=1 in cloudmule's .env)"
@@ -553,8 +555,28 @@ gpu_modules() {
   printf '%s' "${out# }"
 }
 
-# pod_name <job>: cloudmule-<project>[-<target>]-<job> (cloudmule's pods are recognised by the prefix)
-pod_name() { printf 'cloudmule-%s%s-%s' "$PROJECT" "${TARGET:+-$TARGET}" "$1" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-100; }
+# pod_name <job>: cloudmule-<project>[-<target>]-<job>-<run tag> (cloudmule's pods are recognised by the prefix;
+# the run's random tag keeps two sessions running the same job from ever touching each other's pod)
+pod_name() {
+  local base
+  base="$(printf 'cloudmule-%s%s-%s' "$PROJECT" "${TARGET:+-$TARGET}" "$1" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-90)"
+  printf '%s-%s' "$base" "${RUN##*-}"
+}
+
+# forget_stale_pod_keys: deletes throwaway pod keys left by a run that never reached its EXIT trap (killed, or the
+# computer went off): older than the time cap + 5 min, with no pod record of that run left. Younger keys may belong
+# to another session's pod that is still starting.
+forget_stale_pod_keys() {
+  local k run
+  # private keys only (pod-<run>, no dot); a run with a record left keeps everything, its .measure included.
+  # +5: the same grace as RP_REAP_GRACE_MIN in tools.py
+  find "$CM_DIR/keys" -name 'pod-*' ! -name '*.*' -mmin +"$(awk -v m="$RUNPOD_MAX_MINUTES" 'BEGIN { printf "%d", m + 5 }')" \
+    2>/dev/null | while IFS= read -r k; do
+    run="${k##*/pod-}"
+    grep -l "\"run\": \"$run\"" "$POD_RECORDS"/*.json >/dev/null 2>&1 \
+      || rm -f "$k" "$k.pub" "$k.known_hosts" "$k.measure" || true
+  done
+}
 
 # seconds_of <minutes>: whole seconds (the caps may have decimals)
 seconds_of() { awk -v m="$1" 'BEGIN { printf "%d", m * 60 }'; }

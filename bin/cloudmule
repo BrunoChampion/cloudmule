@@ -456,8 +456,8 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     # RunPod first: a Hetzner error below must not hide a GPU pod that bills
     PODS_UNKNOWN=0
     if [ -n "${RUNPOD_API_KEY:-}" ]; then
-      echo "== RunPod GPU pods (they bill while they exist; cloudmule's are deleted after $RUNPOD_MAX_MINUTES min, and"
-      echo "   here once past $RUNPOD_MAX_MINUTES + 5) =="
+      echo "== RunPod GPU pods (they bill while they exist; cloudmule's are deleted after their time cap, $RUNPOD_MAX_MINUTES"
+      echo "   min here, and by this check once past their cap + 5 min) =="
       if ! { [[ "$RUNPOD_MAX_MINUTES" =~ ^[0-9]+(\.[0-9]+)?$ ]] && rp_tools rp-pods --max-minutes "$RUNPOD_MAX_MINUTES" --reap; }; then
         PODS_UNKNOWN=1
         echo "RUNPOD_UNKNOWN: could not check every RunPod pod (reason above): look in the RunPod console (Pods)." >&2
@@ -503,7 +503,8 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     fi
     echo "Last choice: $(last_gpu)"
     IFS=$'\t' read -r last_g last_c <<< "$(last_gpu --fields)" || true
-    rp_tools rp-gpus --clouds "$CLOUDS" --min-vram "$MIN_VRAM_GB" --max-usd "$RUNPOD_MAX_USD_PER_HOUR" \
+    # without a project there is no NEEDS_GPU (`gpu` always has one: gpu_refusals checked it)
+    rp_tools rp-gpus --clouds "$CLOUDS" --min-vram "$MIN_VRAM_GB" --needs "${NEEDS_GPU:-}" --max-usd "$RUNPOD_MAX_USD_PER_HOUR" \
       --max-minutes "$RUNPOD_MAX_MINUTES" --day-left "$DAY_LEFT" --last-gpu "${last_g:-}" --last-cloud "${last_c:-}"
     ;;
 
@@ -513,16 +514,19 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     gpu_refusals "$1"
     need_runpod
     gpu_budget
-    RUN="$(date +%Y%m%d%H%M%S)-$$"
+    RUN_TAG="$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')" || RUN_TAG=""
+    [[ "$RUN_TAG" =~ ^[0-9a-f]{6}$ ]] || die "could not make a random tag for this run (od /dev/urandom)"
+    RUN="$(date +%Y%m%d%H%M%S)-$RUN_TAG"   # this run: <time>-<random tag> (records, watchdog, key, pod name)
     # the pod's disk: the project's MIN_DISK_GB if it sets one; else 30 GB (the image, Chrome and Node fit; the
     # Hetzner default of 40 is sized for the shared server and its workspace)
     POD_DISK="$MIN_DISK_GB"; [ "$DISK_SRC" = config ] || POD_DISK=30
-    LAUNCH=(--candidates "$GPU_CHOICE" --cloud "$GPU_CLOUD" --min-vram "$MIN_VRAM_GB"
+    LAUNCH=(--candidates "$GPU_CHOICE" --cloud "$GPU_CLOUD" --min-vram "$MIN_VRAM_GB" --needs "$NEEDS_GPU"
             --max-usd "$RUNPOD_MAX_USD_PER_HOUR" --max-minutes "$RUNPOD_MAX_MINUTES" --day-left "$DAY_LEFT"
             --name "$(pod_name "$1")" --image "${RUNPOD_IMAGE:-$RUNPOD_IMAGE_DEFAULT}" --disk "$POD_DISK"
             --run "$RUN" --project "$PROJECT" --target "${TARGET:--}" --job "$1")
     if [ "$DRY_RUN" = 1 ]; then rp_tools rp-launch "${LAUNCH[@]}" --dry-run; exit 0; fi
     # a throwaway SSH key for this pod only (pods are never shared), deleted with it
+    forget_stale_pod_keys
     POD_KEY="$CM_DIR/keys/pod-$RUN"
     ssh-keygen -q -t ed25519 -N "" -C "cloudmule-pod" -f "$POD_KEY"
     WATCHDOG=""
@@ -544,7 +548,7 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     MODULES="$(gpu_modules)"
     USAGE_SINK=/dev/null   # setup jobs: the pod's one usage line is written when it is deleted
     ensure_modules
-    if [ "$NEEDS_GPU" = graphics ]; then   # a silent software fallback is ~100x slower: stop before uploading
+    if [ "$NEEDS_GPU" = graphics ]; then   # a silent software fallback is hundreds of times slower: stop first
       rsh cloudmule-webgl-check || die "GPU_NOT_USED: Chrome renders WebGL in software on this pod, not on its GPU"
     fi
     SYNC_EXCLUDE="$SYNC_EXCLUDE ${ONESHOT_EXCLUDE:-}"

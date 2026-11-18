@@ -8,5 +8,7 @@
   {"id": "NVIDIA RTX A4000", "displayName": "RTX A4000", "manufacturer": "Nvidia", "memory": 16, "price": {"secure": 0.25, "community": 0.17}, "availability": "NONE"},
   {"id": "NVIDIA RTX A2000", "displayName": "RTX A2000", "manufacturer": "Nvidia", "memory": 6, "price": {"secure": 0.12, "community": 0.1}, "availability": "HIGH"},
   {"id": "NVIDIA H100 80GB HBM3", "displayName": "H100 SXM", "manufacturer": "Nvidia", "memory": 80, "price": {"secure": 2.69, "community": 1.99}, "availability": "HIGH"},
-  {"id": "AMD Instinct MI300X OAM", "displayName": "MI300X", "manufacturer": "AMD", "memory": 192, "price": {"secure": 0.5, "community": null}, "availability": "MEDIUM"}
+  {"id": "AMD Instinct MI300X OAM", "displayName": "MI300X", "manufacturer": "AMD", "memory": 192, "price": {"secure": 0.5, "community": null}, "availability": "MEDIUM"},
+  {"id": "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb", "displayName": "RTX PRO 6000 MIG", "manufacturer": "Nvidia", "memory": 24, "price": {"secure": 0.69, "community": null}, "availability": "LOW"},
+  {"id": "Tesla V100-PCIE-16GB", "displayName": "V100", "manufacturer": "Nvidia", "memory": 16, "price": {"secure": 0, "community": 0}, "availability": "NONE"}
 ]

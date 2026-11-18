@@ -620,9 +620,10 @@ def gpu_price(g, cloud):
     p = g.get("price")
     v = p.get(cloud.lower()) if isinstance(p, dict) else None
     try:
-        return float(v) if v is not None else None
+        v = float(v) if v is not None else None
     except (TypeError, ValueError):
         return None
+    return v if v and v > 0 else None   # RunPod lists GPUs it does not offer in that cloud at price 0
 
 
 def gpu_avail(g, cloud):
@@ -636,6 +637,7 @@ class GpuLimits:
     """The caps from .env (hourly price, minutes per pod, what is left of today's budget) and the project's VRAM."""
     def __init__(self, o):
         self.vram = float(o.get("min-vram") or 0)
+        self.needs = str(o.get("needs") or "")   # the project's NEEDS_GPU (graphics, cuda, or "" if unknown)
         self.max_usd = float(o["max-usd"])
         self.minutes = float(o["max-minutes"])
         self.day_left = float(o["day-left"])
@@ -652,6 +654,9 @@ def gpu_eval(g, cloud, price, lim):
         why.append(("cloud", "no public SSH (community cloud)"))
     if "nvidia" not in f"{g.get('manufacturer') or ''} {g.get('id') or ''}".lower():
         why.append(("vendor", "not NVIDIA (pods run CUDA images)"))
+    names = " ".join(str(g.get(k) or "") for k in ("id", "name", "displayName"))
+    if lim.needs == "graphics" and re.search(r"\bMIG\b", names, re.I):
+        why.append(("whole-gpu", "MIG slice: no Vulkan/OpenGL (graphics needs a whole GPU)"))
     vram = float(g.get("memory") or g.get("memoryInGb") or 0)
     if vram < lim.vram:
         why.append(("vram", f"VRAM < {gb(lim.vram)} GB"))
@@ -784,7 +789,9 @@ def rp_launch(o):
                 "disk": int(float(o["disk"])), "ports": ["22/tcp"],
                 # the pod's image authorises PUBLIC_KEY for SSH; NVIDIA_DRIVER_CAPABILITIES=all mounts the graphics
                 # libraries too (Vulkan/EGL), not only the compute ones
-                "env": {"PUBLIC_KEY": pub, "SSH_PUBLIC_KEY": pub, "NVIDIA_DRIVER_CAPABILITIES": "all"}}
+                # CLOUDMULE_MAX_MINUTES: this pod's own time cap, so any computer's orphan check uses it
+                "env": {"PUBLIC_KEY": pub, "SSH_PUBLIC_KEY": pub, "NVIDIA_DRIVER_CAPABILITIES": "all",
+                        "CLOUDMULE_MAX_MINUTES": f"{lim.minutes:g}"}}
         progress(f"Creating a GPU pod: {gid}, {cloud}, about {usd(price)} USD/h…")
         new = {"name": o["name"], "gpu": gid, "cloud": cloud, "run": o["run"], "project": o.get("project") or "-",
                "target": o.get("target") or "-", "job": o.get("job") or "-"}
@@ -801,7 +808,7 @@ def rp_launch(o):
         if not pod.get("id"):
             raise RunPodError(0, f"RunPod answered without a pod id; {cleanup_strays(o, new, price)}")
         cost = pod_cost(pod, price)
-        rec = dict(new, id=str(pod["id"]), cost=cost, created=time.time())
+        rec = dict(new, id=str(pod["id"]), cost=cost, created=time.time(), max_minutes=lim.minutes)
         write_record(o["records"], rec)   # first thing: from now on every cleanup path knows this pod
         over = None
         if cost > lim.max_usd:
@@ -913,10 +920,28 @@ def pod_gpu(p, rec):
     return str(g or p.get("gpuTypeId") or (rec or {}).get("gpu") or "?")
 
 
+def pod_cap(p, rec, default):
+    """A pod's own time cap in minutes: the CLOUDMULE_MAX_MINUTES it was created with (its env, as RunPod lists it,
+    or this computer's record), else this computer's cap."""
+    env = p.get("env")
+    if isinstance(env, list):   # ["K=V", …] or [{"key": K, "value": V}, …]
+        env = dict(e.split("=", 1) if isinstance(e, str) and "=" in e else
+                   (e.get("key"), e.get("value")) if isinstance(e, dict) else ("", "") for e in env)
+    for v in ((env or {}).get("CLOUDMULE_MAX_MINUTES") if isinstance(env, dict) else None,
+              (rec or {}).get("max_minutes")):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(v) and v > 0:   # a broken value must neither keep a pod forever nor reap it at once
+            return v
+    return default
+
+
 def rp_pods(o):
     """The account's pods. cloudmule's (named cloudmule-*) older than max-minutes + 5 are orphans: deleted. A pod
     that could not be deleted is still listed, and the command then fails (exit 2)."""
-    limit = float(o["max-minutes"]) + RP_REAP_GRACE_MIN
+    own = float(o["max-minutes"])
     recs = {r["id"]: r for r in read_records(o["records"])}
     pods = rp_list(rp("GET", "/pods"))
     seen, lines, worst, failed = set(), [], 0.0, []
@@ -933,13 +958,14 @@ def rp_pods(o):
             write_record(o["records"], rec)
             age = 0.0
         cost = pod_cost(p, (rec or {}).get("cost"))
-        if mine and o.get("reap") and age is not None and age > limit:
+        cap = pod_cap(p, rec, own)   # another computer may have created it with a longer cap
+        if mine and o.get("reap") and age is not None and age > cap + RP_REAP_GRACE_MIN:
             try:
                 # a pod no record of this computer knows (another computer's, or a lost record): job = its name
                 pod_delete(rec or {"id": pid, "gpu": pod_gpu(p, rec), "cost": cost,
                                    "created": time.time() - age * 60, "job": name}, o)
-                print(f"ORPHAN_DELETED: {name} ({pid}), {pod_gpu(p, rec)}, up {age:.0f} min (past "
-                      f"RUNPOD_MAX_MINUTES + {RP_REAP_GRACE_MIN})")
+                print(f"ORPHAN_DELETED: {name} ({pid}), {pod_gpu(p, rec)}, up {age:.0f} min (past its "
+                      f"{cap:g} min cap + {RP_REAP_GRACE_MIN})")
                 continue
             except RunPodError as e:
                 failed.append(str(e))
@@ -950,16 +976,16 @@ def rp_pods(o):
         else:
             up = f"up {age:.0f} min"
         if mine:
-            worst += cost * float(o["max-minutes"]) / 60
+            worst += cost * cap / 60
             lines.append(f"  {name} ({pid}): {pod_gpu(p, rec)}, {usd(cost)} USD/h, {up}")
         else:
             lines.append(f"  WARNING: {name or '(no name)'} ({pid}) is not cloudmule's: {pod_gpu(p, rec)}, "
                          f"{usd(cost)} USD/h, {up}. It bills too (RunPod console -> Pods).")
     # records of pods that no longer exist (deleted elsewhere): count them as billed for their whole time limit
     for pid, rec in recs.items():
-        if pid not in seen and time.time() - float(rec.get("created") or 0) > limit * 60:
-            pod_delete(rec, o, billed_s=int(min(time.time() - float(rec.get("created") or 0),
-                                                float(o["max-minutes"]) * 60)))
+        cap = pod_cap({}, rec, own)
+        if pid not in seen and time.time() - float(rec.get("created") or 0) > (cap + RP_REAP_GRACE_MIN) * 60:
+            pod_delete(rec, o, billed_s=int(min(time.time() - float(rec.get("created") or 0), cap * 60)))
     if o.get("worst"):
         print(f"RUNNING_WORST_USD {worst:.4f}")
     else:

@@ -76,7 +76,8 @@ class Handler(BaseHTTPRequestHandler):
             with open(os.path.join(FIX, "runpod-catalog-secure.json"), encoding="utf-8") as f:
                 price = next((g["price"]["secure"] for g in json.load(f) if g["id"] == gid), 0.5)
             pod = {"id": f"fakepod{state['next']}", "name": req["name"], "cost": sc.get("cost", {}).get(gid, price),
-                   "cloud": req["cloud"], "gpu": {"id": gid, "count": 1}, "desiredStatus": "RUNNING"}
+                   "cloud": req["cloud"], "gpu": {"id": gid, "count": 1}, "desiredStatus": "RUNNING",
+                   "env": req.get("env", {})}
             state["next"] += 1
             state["pods"].append(pod)
             save_state(state)

@@ -272,6 +272,8 @@ check "a GPU with too little VRAM does not fit" row_has "NVIDIA RTX A2000" "no: 
 check "a GPU above the hourly cap does not fit" row_has "NVIDIA H100 80GB HBM3" "no: above the hourly cap 0.70 USD/h"
 check "a GPU that is not NVIDIA does not fit" row_has "AMD Instinct MI300X OAM" "no: not NVIDIA"
 check "an unavailable GPU says so" row_has "NVIDIA RTX A4000" "no: none available now"
+check "a MIG slice does not fit graphics work (no Vulkan/OpenGL)" row_has "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb" "no: MIG slice"
+check "a GPU listed at price 0 (not offered) is left out" hasnt "Tesla V100-PCIE-16GB"
 check "COMMUNITY offers are listed as unusable (no public SSH)" row_has "NVIDIA GeForce RTX 5080" "no: no public SSH (community cloud)"
 check "the recommendation is the cheapest fitting GPU with MEDIUM or HIGH availability, not a cheaper LOW one" \
   has "RECOMMENDED: NVIDIA A40 SECURE 0.59"
@@ -300,6 +302,7 @@ check "the 403 makes gpus fail" test "$RC" != 0
 scenario
 run gpus
 check "gpus without a project applies no VRAM need" row_has "NVIDIA RTX A2000" "fits"
+check "...nor rules out MIG slices (only graphics work needs a whole GPU)" row_has "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb" "fits"
 
 echo "== gpu (one job on a RunPod GPU pod, deleted at the end)"
 posts() { grep -c '^POST /v2/pods ' "$RP/requests.log" 2>/dev/null || true; }
@@ -312,12 +315,20 @@ check "gpu without --gpu is refused, asking for the user's choice" has "NEEDS_GP
 run gpu gfx --gpu "NVIDIA A40" render
 check "gpu without standing approval or --approved is refused" has "NEEDS_APPROVAL"
 check "the approval refusal fails" test "$RC" != 0
+run gpu big --gpu "NVIDIA A40" --approved example
+check "a project that does not say what GPU work it does is refused (no silent CPU fallback)" has "NEEDS_GPU_UNSET"
 printf 'NEEDS_GPU=0\n' >> "$BIG/.cloudmule/config.sh"; run gpu big --gpu "NVIDIA A40" --approved example
 check "a project that says NEEDS_GPU=0 is refused" has "NO_GPU_NEEDED"
+run gpu gfx --gpu "NVIDIA A40" --cloud community --approved render
+check "COMMUNITY pods are refused before anything is created" has "NO_FITTING_GPU: COMMUNITY pods have no public SSH"
 run gpu gfx --gpu "NVIDIA A40" --dry-run render
 check "--dry-run says what it would create, with the worst case" has "WOULD_CREATE: NVIDIA A40 SECURE 0.59 0.393"
 run gpu gfx --gpu "NVIDIA H100 80GB HBM3" --approved render
 check "a GPU above the hourly cap is refused" has "ABOVE_HOURLY_CAP"
+run gpu gfx --gpu "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb" --approved render
+check "a MIG slice is refused for graphics work" has "NO_FITTING_GPU: NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb: MIG slice"
+run gpu gfx --gpu "Tesla V100-PCIE-16GB" --approved render
+check "a GPU the catalog lists at price 0 is refused as not offered" has "Tesla V100-PCIE-16GB: not offered"
 printf '%s\tgfx\t-\trender\tNVIDIA A40\t600\tn/a\tn/a\tn/a\tn/a\t0\tn/a\trunpod\t11000\t1.9500\n' "$NOW" >> "$CM_HOME/logs/usage.tsv"
 run gpu gfx --gpu "NVIDIA A40" --approved render
 check "a pod whose worst case passes today's cap is refused" has "DAILY_CAP_REACHED"
@@ -326,6 +337,15 @@ check "no refusal ever asked RunPod to create a pod" test "$(posts)" = 0
 
 # candidates in order: the first is not available, the second is billed above the cap (deleted at once), the
 # third runs the job
+# keys a killed run left behind: an old one (gone with its pod) and a young one (another session's pod may be starting)
+for k in pod-20200101000000-aaaaaa pod-29990101000000-bbbbbb; do : > "$CM_HOME/keys/$k"; : > "$CM_HOME/keys/$k.pub"; done
+touch -t 202001010000 "$CM_HOME/keys/pod-20200101000000-aaaaaa"
+# an old key whose pod is still recorded (alive, or not yet accounted for): it and its measurement must stay
+: > "$CM_HOME/keys/pod-20200101000000-cccccc"; : > "$CM_HOME/keys/pod-20200101000000-cccccc.measure"
+touch -t 202001010000 "$CM_HOME/keys/pod-20200101000000-cccccc" "$CM_HOME/keys/pod-20200101000000-cccccc.measure"
+mkdir -p "$CM_HOME/logs/runpod"
+printf '{"id": "kept9", "run": "20200101000000-cccccc", "created": %s, "cost": 0.5, "gpu": "NVIDIA A40"}\n' \
+  "$(date +%s)" > "$CM_HOME/logs/runpod/kept9.json"
 scenario '{"unavailable": ["NVIDIA RTX PRO 4000 Blackwell"], "cost": {"NVIDIA L4": 0.89}}'; : > "$RP/requests.log"; : > "$FAKE_SSH_LOG"
 gpu_run gfx --gpu "NVIDIA RTX PRO 4000 Blackwell,NVIDIA L4,NVIDIA A40" --approved render
 check "gpu runs the job on the pod" has "GPU_OK: render"
@@ -338,7 +358,8 @@ check "it reports the GPU and price used" has "GPU pod fakepod2 created: NVIDIA 
 check "the pod is created with the SSH key and the graphics capability, on the default image" \
   bash -c "grep -F '\"PUBLIC_KEY\": \"ssh-ed25519 ' '$RP/requests.log' | grep -F 'NVIDIA_DRIVER_CAPABILITIES\": \"all' \
     | grep -F 'runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04' >/dev/null"
-check "the pod is named after the project and the job" grep -qF '"name": "cloudmule-gfx-render"' "$RP/requests.log"
+check "the pod carries its own time cap, for any computer's orphan check" grep -qF '"CLOUDMULE_MAX_MINUTES": "40"' "$RP/requests.log"
+check "the pod is named after the project, the job and this run" grep -qE '"name": "cloudmule-gfx-render-[0-9a-f]{6}"' "$RP/requests.log"
 check "the pod guard starts first thing after SSH" bash -c "sed -n 2p '$FAKE_SSH_LOG' | grep -F 'pod-guard.sh' >/dev/null"
 check "graphics projects get chrome-libs and gpu-graphics before their own modules" \
   bash -c "grep -o 'module-[a-z-]*' '$FAKE_SSH_LOG' | uniq | tr '\n' ' ' | grep 'module-chrome-libs module-gpu-graphics module-node' >/dev/null"
@@ -352,6 +373,12 @@ check "the pod's usage line records the GPU, provider and cost" \
   bash -c "awk -F'\t' '\$4==\"render\" && \$5==\"NVIDIA A40\" && \$6==\"90\" && \$13==\"runpod\" && \$15 ~ /^[0-9.]+\$/' '$CM_HOME/logs/usage.tsv' | grep . >/dev/null"
 check "the above-cap pod's few seconds are recorded too" \
   bash -c "awk -F'\t' '\$5==\"NVIDIA L4\" && \$13==\"runpod\"' '$CM_HOME/logs/usage.tsv' | grep . >/dev/null"
+check "an old pod key a killed run left behind is cleaned up" test ! -e "$CM_HOME/keys/pod-20200101000000-aaaaaa"
+check "a young pod key (maybe another session's starting pod) is kept" test -e "$CM_HOME/keys/pod-29990101000000-bbbbbb"
+check "an old key whose pod is still recorded is kept, with its measurement" \
+  bash -c "[ -e '$CM_HOME/keys/pod-20200101000000-cccccc' ] && [ -e '$CM_HOME/keys/pod-20200101000000-cccccc.measure' ]"
+rm -f "$CM_HOME/keys/pod-29990101000000-bbbbbb" "$CM_HOME/keys/pod-29990101000000-bbbbbb.pub" \
+  "$CM_HOME/keys/pod-20200101000000-cccccc" "$CM_HOME/keys/pod-20200101000000-cccccc.measure" "$CM_HOME/logs/runpod/kept9.json"
 check "the throwaway SSH key is deleted with the pod" bash -c "! ls '$CM_HOME/keys' | grep '^pod-' >/dev/null"
 check "no pod record is left" bash -c "[ -z \"\$(ls '$CM_HOME/logs/runpod' 2>/dev/null)\" ]"
 check "the RunPod key is never sent to the pod" bash -c "! grep -F '$RP_KEY' '$RP/requests.log' '$FAKE_SSH_LOG' >/dev/null"
@@ -417,7 +444,8 @@ scenario '{"pods": [
   {"id": "old1", "name": "cloudmule-old-render", "cost": 0.59, "gpu": {"id": "NVIDIA A40"}, "runtime": {"uptimeInSeconds": 7200}},
   {"id": "young1", "name": "cloudmule-gfx-render", "cost": 0.59, "gpu": {"id": "NVIDIA A40"}, "runtime": {"uptimeInSeconds": 300}},
   {"id": "noage1", "name": "cloudmule-gfx-probe", "cost": 0.24, "gpu": {"id": "NVIDIA RTX 2000 Ada Generation"}},
-  {"id": "other1", "name": "my-notebook", "cost": 0.69, "gpu": {"id": "NVIDIA L4"}, "runtime": {"uptimeInSeconds": 7200}}]}'
+  {"id": "other1", "name": "my-notebook", "cost": 0.69, "gpu": {"id": "NVIDIA L4"}, "runtime": {"uptimeInSeconds": 7200}},
+  {"id": "long1", "name": "cloudmule-big-render-abc123", "cost": 0.59, "gpu": {"id": "NVIDIA A40"}, "env": {"CLOUDMULE_MAX_MINUTES": "180"}, "runtime": {"uptimeInSeconds": 7200}}]}'
 : > "$RP/requests.log"
 OUT="$(FAKE_HC_SCENARIO=empty cm status)"; RC=$?; printf '%s\n' "$OUT" >> "$ALL_OUT"
 check "status lists the RunPod pods" has "== RunPod GPU pods"
@@ -426,6 +454,8 @@ check "status deletes a cloudmule pod past its time cap and says so" has "ORPHAN
 check "...through the API" grep -q '^DELETE /v2/pods/old1 ' "$RP/requests.log"
 check "status warns about a pod that is not cloudmule's, without touching it" has "WARNING: my-notebook (other1) is not cloudmule's"
 check "...and never deletes it" bash -c "! grep '^DELETE /v2/pods/other1 ' '$RP/requests.log' >/dev/null"
+check "a pod created with a longer time cap (another computer's .env) is not deleted before its own cap" \
+  bash -c "! grep '^DELETE /v2/pods/long1 ' '$RP/requests.log' >/dev/null"
 check "status succeeds when every pod could be checked" test "$RC" = 0
 check "a cloudmule pod of unknown age is kept, and timed from now" \
   has "cloudmule-gfx-probe (noage1): NVIDIA RTX 2000 Ada Generation, 0.24 USD/h, up ? min (RunPod gives no age; first seen 0 min ago)"
