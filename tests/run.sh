@@ -403,6 +403,42 @@ gpu_run gfx --gpu "NVIDIA A40" render
 check "with a standing approval in .env, gpu runs without --approved" has "GPU_OK: render"
 sed '/^RUNPOD_STANDING_APPROVAL=1$/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
 
+echo "== usage and status with GPU pods"
+run usage gfx
+check "usage shows what a GPU job cost and how long its pods existed" \
+  bash -c "printf '%s\n' \"\$1\" | grep -E '^gfx +render .* USD / [0-9]+ min +NVIDIA A40 \(runpod\)' >/dev/null" _ "$OUT"
+check "usage sums up the GPU spend" has "GPU pods (RunPod): "
+check "usage says the GPU cost is an estimate" has "RunPod's billing is authoritative"
+run usage
+check "Hetzner jobs have no GPU cost" bash -c "printf '%s\n' \"\$1\" | grep -E '^videos +render .* - +ccx33' >/dev/null" _ "$OUT"
+# pods in the account: a cloudmule pod up 2 h (an orphan), one up 5 min, one whose age the API does not give, and
+# a pod that is not cloudmule's
+scenario '{"pods": [
+  {"id": "old1", "name": "cloudmule-old-render", "cost": 0.59, "gpu": {"id": "NVIDIA A40"}, "runtime": {"uptimeInSeconds": 7200}},
+  {"id": "young1", "name": "cloudmule-gfx-render", "cost": 0.59, "gpu": {"id": "NVIDIA A40"}, "runtime": {"uptimeInSeconds": 300}},
+  {"id": "noage1", "name": "cloudmule-gfx-probe", "cost": 0.24, "gpu": {"id": "NVIDIA RTX 2000 Ada Generation"}},
+  {"id": "other1", "name": "my-notebook", "cost": 0.69, "gpu": {"id": "NVIDIA L4"}, "runtime": {"uptimeInSeconds": 7200}}]}'
+: > "$RP/requests.log"
+OUT="$(FAKE_HC_SCENARIO=empty cm status)"; RC=$?; printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "status lists the RunPod pods" has "== RunPod GPU pods"
+check "status lists a running cloudmule pod with its GPU, price and age" has "cloudmule-gfx-render (young1): NVIDIA A40, 0.59 USD/h, up 5 min"
+check "status deletes a cloudmule pod past its time cap and says so" has "ORPHAN_DELETED: cloudmule-old-render (old1)"
+check "...through the API" grep -q '^DELETE /v2/pods/old1 ' "$RP/requests.log"
+check "status warns about a pod that is not cloudmule's, without touching it" has "WARNING: my-notebook (other1) is not cloudmule's"
+check "...and never deletes it" bash -c "! grep '^DELETE /v2/pods/other1 ' '$RP/requests.log' >/dev/null"
+check "status succeeds when every pod could be checked" test "$RC" = 0
+check "a cloudmule pod of unknown age is kept, and timed from now" \
+  has "cloudmule-gfx-probe (noage1): NVIDIA RTX 2000 Ada Generation, 0.24 USD/h, up ? min (RunPod gives no age; first seen 0 min ago)"
+check "...and remembered, so a later check can reap it" test -f "$CM_HOME/logs/runpod/noage1.json"
+check "the orphan's cost counts in the usage lines" \
+  bash -c "awk -F'\t' '\$4==\"cloudmule-old-render\" && \$13==\"runpod\"' '$CM_HOME/logs/usage.tsv' | grep . >/dev/null"
+rm -f "$CM_HOME/logs/runpod/noage1.json"; scenario
+OUT="$(RUNPOD_API_BASE=http://127.0.0.1:9/v2 FAKE_HC_SCENARIO=empty cm status)"; RC=$?; printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "status says when it could not check the RunPod pods" has "RUNPOD_UNKNOWN"
+check "...still shows the Hetzner part" has "== Snapshots"
+check "...and fails, so nobody reads it as all clear" test "$RC" != 0
+awk -F'\t' '$13 != "runpod"' "$CM_HOME/logs/usage.tsv" > "$WORK/u" && mv "$WORK/u" "$CM_HOME/logs/usage.tsv"
+
 echo "== end --keep (the server cannot be reached: the save must still happen through the API)"
 : > "$WORK/before.log"; cp "$FAKE_HC_LOG" "$WORK/before.log"
 OUT="$(FAKE_HC_SCENARIO=running cm end videos --keep)"

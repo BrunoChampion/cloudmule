@@ -33,7 +33,8 @@
 #                                                   one job; creates the server only if it is off (then --type is
 #                                                   required) and deletes it at the end if nobody else is using it
 #   cloudmule leases                                who is using the server (and for how long, running jobs)
-#   cloudmule status                                what exists and therefore bills: server, leases, snapshots
+#   cloudmule status                                what exists and therefore bills: server, leases, snapshots,
+#                                                   RunPod GPU pods (deletes cloudmule's orphan pods)
 #   cloudmule usage   [project] [target]            what each job used (peak RAM, cores, time; GPU pods: minutes
 #                                                   and cost), measured on every remote job (no cost)
 #
@@ -452,6 +453,16 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     ;;
 
   status)
+    # RunPod first: a Hetzner error below must not hide a GPU pod that bills
+    PODS_UNKNOWN=0
+    if [ -n "${RUNPOD_API_KEY:-}" ]; then
+      echo "== RunPod GPU pods (they bill while they exist; cloudmule's are deleted after $RUNPOD_MAX_MINUTES min, and"
+      echo "   here once past $RUNPOD_MAX_MINUTES + 5) =="
+      if ! { [[ "$RUNPOD_MAX_MINUTES" =~ ^[0-9]+(\.[0-9]+)?$ ]] && rp_tools rp-pods --max-minutes "$RUNPOD_MAX_MINUTES" --reap; }; then
+        PODS_UNKNOWN=1
+        echo "RUNPOD_UNKNOWN: could not check every RunPod pod (reason above): look in the RunPod console (Pods)." >&2
+      fi
+    fi
     echo "== Servers (they bill by the hour while they exist, running or not) =="
     servers="$(hc server list -l "$LABEL" -o json)"
     if [ "$(printf '%s' "$servers" | tr -d '[:space:]')" = "[]" ]; then echo "  none"
@@ -463,6 +474,7 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     fi
     echo "== Snapshots (they bill per GB per month) =="
     hc image list -t snapshot -l "$LABEL" -o columns=id,description,image_size,created
+    [ "$PODS_UNKNOWN" = 0 ] || exit 1   # an agent checking that nothing bills must not read this as "all clear"
     ;;
 
   gpus)

@@ -441,7 +441,7 @@ def append_usage(path, keep, out):
 
 def usage_report(args):
     """usage <usage.tsv> <keep_days> [project] [target]: per project and job, runs, highest peak RAM, RAM wait,
-    cores used, longest run, server types."""
+    cores used, longest run, GPU cost and time, server types or GPUs; then the GPU spend."""
     path, keep = args[0], float(args[1])
     project, target = (args[2:3] or [""])[0], (args[3:4] or [""])[0]
     rows = [u for u in read_usage(path, keep)
@@ -454,11 +454,14 @@ def usage_report(args):
     for u in rows:
         jobs.setdefault((u["project"], u["job"]), []).append(u)
     print(f"Job usage, last {keep:g} days ({path}):")
-    print(f"{'PROJECT':<12}{'JOB':<18}{'RUNS':>5}  {'PEAK RAM':<15}{'RAM WAIT':<10}{'CORES USED':<24}{'LONGEST':<9}TYPES")
+    print(f"{'PROJECT':<12}{'JOB':<18}{'RUNS':>5}  {'PEAK RAM':<15}{'RAM WAIT':<10}{'CORES USED':<24}{'LONGEST':<9}"
+          f"{'GPU COST':<20}  TYPES")
     for (p, j), us in sorted(jobs.items()):
         longest = f"{max(int(u['seconds']) for u in us) / 60:.0f} min"
-        types = " ".join(sorted({u["type"] for u in us}))
-        print(f"{p:<12}{j:<18}{len(us):>5}  {peak_ram(us):<15}{ram_wait(us):<10}{cores_used(us):<24}{longest:<9}{types}")
+        # ", " between types: a GPU id has spaces
+        types = ", ".join(sorted({u["type"] + (" (runpod)" if is_pod(u) else "") for u in us}))
+        print(f"{p:<12}{j:<18}{len(us):>5}  {peak_ram(us):<15}{ram_wait(us):<10}{cores_used(us):<24}{longest:<9}"
+              f"{gpu_spend(us):<20}  {types}")
     measured = [u for u in rows if u["peak_mb"] != "n/a"]
     if measured:
         top = max(measured, key=lambda u: int(u["peak_mb"]))
@@ -466,6 +469,22 @@ def usage_report(args):
         print(f"Highest peak RAM: {int(top['peak_mb']) / 1024:.1f} GB ({where}).")
     print("PEAK RAM includes file cache the kernel frees when needed; RAM WAIT is how long the job stalled for lack")
     print("of memory: near 0 s means the RAM was enough. Jobs that run at the same time on the shared server add up.")
+    pods = [u for u in rows if is_pod(u)]
+    if pods:
+        print(f"GPU pods (RunPod): {gpu_spend(pods)} in these {keep:g} days, {gpu_spend(of_today(pods), none="0.00 USD / 0 min")} today. "
+              f"GPU COST is cloudmule's estimate (USD/h x minutes")
+        print("the pod existed); RunPod's billing is authoritative.")
+
+
+def gpu_spend(us, none="-"):
+    """What the GPU pods among these usage lines cost and how long they existed, "0.15 USD / 15 min" (`none` when
+    no line is a pod's)."""
+    if not any(is_pod(u) for u in us):
+        return none
+    pods = [u for u in us if is_pod(u)]
+    usd_total = sum(float(u["cost_usd"]) for u in pods if u["cost_usd"] != "n/a")
+    minutes = sum(int(u["billed_s"]) for u in pods if u["billed_s"] != "n/a") / 60
+    return f"{usd_total:.2f} USD / {minutes:.0f} min"
 
 
 def peak_ram(us):
@@ -895,38 +914,47 @@ def pod_gpu(p, rec):
 
 
 def rp_pods(o):
-    """The account's pods. cloudmule's (named cloudmule-*) older than max-minutes + 5 are orphans: deleted."""
+    """The account's pods. cloudmule's (named cloudmule-*) older than max-minutes + 5 are orphans: deleted. A pod
+    that could not be deleted is still listed, and the command then fails (exit 2)."""
     limit = float(o["max-minutes"]) + RP_REAP_GRACE_MIN
     recs = {r["id"]: r for r in read_records(o["records"])}
     pods = rp_list(rp("GET", "/pods"))
-    seen, lines, worst = set(), [], 0.0
+    seen, lines, worst, failed = set(), [], 0.0, []
     for p in pods:
         pid, name = str(p.get("id") or ""), str(p.get("name") or "")
         seen.add(pid)
+        mine = name.startswith("cloudmule-")
         rec = recs.get(pid)
         age = pod_age_min(p, rec)
-        if age is None and name.startswith("cloudmule-"):
-            # no age anywhere: remember when this computer first saw it, so it is reaped after the limit from now
+        if age is None and mine:
+            # no age anywhere: remember when this computer first saw it, so it is reaped after the limit from then
             rec = {"id": pid, "name": name, "gpu": pod_gpu(p, None), "cost": pod_cost(p), "created": time.time(),
-                   "run": "", "project": "-", "target": "-", "job": name}
+                   "first_seen": True, "run": "", "project": "-", "target": "-", "job": name}
             write_record(o["records"], rec)
             age = 0.0
         cost = pod_cost(p, (rec or {}).get("cost"))
-        mine = name.startswith("cloudmule-")
         if mine and o.get("reap") and age is not None and age > limit:
-            # a pod no record of this computer knows (another computer's, or a lost record): job = its name
-            pod_delete(rec or {"id": pid, "gpu": pod_gpu(p, rec), "cost": cost, "created": time.time() - age * 60,
-                               "job": name}, o)
-            print(f"ORPHAN_DELETED: {name} ({pid}), {pod_gpu(p, rec)}, up {age:.0f} min (past RUNPOD_MAX_MINUTES "
-                  f"+ {RP_REAP_GRACE_MIN})")
-            continue
-        up = "?" if age is None else f"{age:.0f}"
+            try:
+                # a pod no record of this computer knows (another computer's, or a lost record): job = its name
+                pod_delete(rec or {"id": pid, "gpu": pod_gpu(p, rec), "cost": cost,
+                                   "created": time.time() - age * 60, "job": name}, o)
+                print(f"ORPHAN_DELETED: {name} ({pid}), {pod_gpu(p, rec)}, up {age:.0f} min (past "
+                      f"RUNPOD_MAX_MINUTES + {RP_REAP_GRACE_MIN})")
+                continue
+            except RunPodError as e:
+                failed.append(str(e))
+        if age is None:
+            up = "up ? min"
+        elif (rec or {}).get("first_seen"):
+            up = f"up ? min (RunPod gives no age; first seen {age:.0f} min ago)"
+        else:
+            up = f"up {age:.0f} min"
         if mine:
             worst += cost * float(o["max-minutes"]) / 60
-            lines.append(f"  {name} ({pid}): {pod_gpu(p, rec)}, {usd(cost)} USD/h, up {up} min")
+            lines.append(f"  {name} ({pid}): {pod_gpu(p, rec)}, {usd(cost)} USD/h, {up}")
         else:
             lines.append(f"  WARNING: {name or '(no name)'} ({pid}) is not cloudmule's: {pod_gpu(p, rec)}, "
-                         f"{usd(cost)} USD/h, up {up} min. It bills too (RunPod console -> Pods).")
+                         f"{usd(cost)} USD/h, {up}. It bills too (RunPod console -> Pods).")
     # records of pods that no longer exist (deleted elsewhere): count them as billed for their whole time limit
     for pid, rec in recs.items():
         if pid not in seen and time.time() - float(rec.get("created") or 0) > limit * 60:
@@ -936,13 +964,24 @@ def rp_pods(o):
         print(f"RUNNING_WORST_USD {worst:.4f}")
     else:
         print("\n".join(lines) if lines else "  none")
+    if failed:
+        raise RunPodError(0, " | ".join(failed))
+
+
+def is_pod(u):
+    """A usage line of a RunPod GPU pod (the others are jobs on the Hetzner server)."""
+    return u["provider"] == "runpod"
+
+
+def of_today(rows):
+    today = datetime.now().strftime("%Y-%m-%d")
+    return [u for u in rows if u["date"].startswith(today)]
 
 
 def rp_spend(path):
     """Today's GPU spend in USD, from the usage lines of deleted pods."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    total = sum(float(u["cost_usd"]) for u in read_usage(path, 3650, prune=False)
-                if u["provider"] == "runpod" and u["date"].startswith(today) and u["cost_usd"] != "n/a")
+    total = sum(float(u["cost_usd"]) for u in of_today(read_usage(path, 3650, prune=False))
+                if is_pod(u) and u["cost_usd"] != "n/a")
     print(f"{total:.4f}")
 
 
