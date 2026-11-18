@@ -34,11 +34,17 @@
 #                                                   required) and deletes it at the end if nobody else is using it
 #   cloudmule leases                                who is using the server (and for how long, running jobs)
 #   cloudmule status                                what exists and therefore bills: server, leases, snapshots
-#   cloudmule usage   [project] [target]            what each job used (peak RAM, cores, time), measured on every
-#                                                   remote job; to choose a server size with evidence (no cost)
+#   cloudmule usage   [project] [target]            what each job used (peak RAM, cores, time; GPU pods: minutes
+#                                                   and cost), measured on every remote job (no cost)
+#
+# Work that needs a GPU runs on RunPod instead, one pod per job (RUNPOD_API_KEY and caps in .env):
+#   cloudmule gpus    [project] [target] [--cloud secure|community|all]
+#                                                   the GPUs available now, price, VRAM, whether each fits the
+#                                                   project and the caps, today's spend; ends with RECOMMENDED (no
+#                                                   cost; it deletes orphan pods: cloudmule's, past their time cap)
 #
 # [target] is only for projects with NEEDS_TARGET=1 (one sub-folder per piece of work, e.g. per video).
-case "${1:-help}" in init|projects|usage|help|-h|--help) export CM_NO_TOKEN=1 ;; esac
+case "${1:-help}" in init|projects|usage|gpus|help|-h|--help) export CM_NO_TOKEN=1 ;; esac
 . "$(dirname "$0")/lib.sh"
 
 CMD="${1:-help}"; shift || true
@@ -430,6 +436,36 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     fi
     echo "== Snapshots (they bill per GB per month) =="
     hc image list -t snapshot -l "$LABEL" -o columns=id,description,image_size,created
+    ;;
+
+  gpus)
+    CLOUDS="SECURE COMMUNITY"
+    if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then take_project "$@"; set -- "${REST[@]+"${REST[@]}"}"; else MIN_VRAM_GB=0; fi
+    while [ $# -gt 0 ]; do
+      case "$1" in --cloud) CLOUDS="$(cloud_name "${2:-}")"; shift 2 ;; *) die "unknown option: $1" ;; esac
+    done
+    need_runpod
+    gpu_budget
+    echo "Caps (cloudmule's .env): at most $RUNPOD_MAX_USD_PER_HOUR USD/h per pod; every pod is deleted after"
+    echo "  $RUNPOD_MAX_MINUTES min whatever happens; at most $RUNPOD_MAX_USD_PER_DAY USD of GPU pods per day."
+    echo "Today's GPU spend: $SPENT USD, plus $RUNNING_WORST USD worst case of pods running now: $DAY_LEFT_SHOWN USD left today."
+    if [ "$RUNPOD_STANDING_APPROVAL" = 1 ]; then
+      echo "Standing approval: ON (the agent may create GPU pods without asking, within these caps)."
+    else
+      echo "Standing approval: off (every pod waits for the user's yes)."
+    fi
+    if [ -n "${PROJECT:-}" ]; then
+      case "$NEEDS_GPU" in
+        "") need="NEEDS_GPU is not set (ask the user whether this work needs a GPU)" ;;
+        0) need="no GPU (NEEDS_GPU=0: 'cloudmule gpu' refuses it)" ;;
+        *) need="a GPU for $NEEDS_GPU work (NEEDS_GPU=$NEEDS_GPU)" ;;
+      esac
+      echo "Project $PROJECT needs: $need; VRAM >= $MIN_VRAM_GB GB ($VRAM_SRC)."
+    fi
+    echo "Last choice: $(last_gpu)"
+    IFS=$'\t' read -r last_g last_c <<< "$(last_gpu --fields)" || true
+    rp_tools rp-gpus --clouds "$CLOUDS" --min-vram "$MIN_VRAM_GB" --max-usd "$RUNPOD_MAX_USD_PER_HOUR" \
+      --max-minutes "$RUNPOD_MAX_MINUTES" --day-left "$DAY_LEFT" --last-gpu "${last_g:-}" --last-cloud "${last_c:-}"
     ;;
 
   usage)

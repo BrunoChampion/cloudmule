@@ -6,6 +6,8 @@ CM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # settings given in the environment win over .env (e.g. IDLE_MINUTES=10 cloudmule start …)
 CM_SETTINGS='LOCATIONS|IDLE_MINUTES|SESSION_MAX_HOURS|ONESHOT_IDLE_MINUTES|ONESHOT_MAX_HOURS|BASE_IMAGE|SERVER_NAME|LOG_KEEP_DAYS|USAGE_KEEP_DAYS'
 CM_FROM_ENV="$(env | grep -E "^($CM_SETTINGS)=" || true)"
+# RunPod's caps and the standing approval count only from .env: nobody raises them for one command
+unset RUNPOD_MAX_USD_PER_HOUR RUNPOD_MAX_MINUTES RUNPOD_MAX_USD_PER_DAY RUNPOD_STANDING_APPROVAL
 if [ -f "$CM_DIR/.env" ]; then set -a; . "$CM_DIR/.env"; set +a; fi
 while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$CM_FROM_ENV"
 if [ -z "${HCLOUD_TOKEN:-}" ] && [ -z "${CM_NO_TOKEN:-}" ]; then   # init/projects/help work without a token
@@ -41,6 +43,16 @@ KEY="$CM_DIR/keys/id_ed25519"
 KNOWN="$CM_DIR/keys/known_hosts"
 REGISTRY="$CM_DIR/registry"                       # registry/<project> = that project's folder on this computer
 HOME_POINTER="$HOME/.config/cloudmule/home"       # tells the cloudmule skill where this folder is
+# RunPod GPU pods (only for work that needs a GPU). The caps are hard limits, enforced in code.
+RUNPOD_MAX_USD_PER_HOUR=${RUNPOD_MAX_USD_PER_HOUR:-0.70}   # never create a pod above this price
+RUNPOD_MAX_MINUTES=${RUNPOD_MAX_MINUTES:-40}               # every pod is deleted after this long, whatever happens
+RUNPOD_MAX_USD_PER_DAY=${RUNPOD_MAX_USD_PER_DAY:-2.00}     # today's spend + the new pod's worst case must stay below
+RUNPOD_STANDING_APPROVAL=${RUNPOD_STANDING_APPROVAL:-0}    # 1 = GPU pods may be created without asking each time
+RUNPOD_BOOT_SECONDS=${RUNPOD_BOOT_SECONDS:-300}            # no public SSH after this long: NO_PUBLIC_SSH, deleted
+RUNPOD_POLL_SECONDS=${RUNPOD_POLL_SECONDS:-10}
+RUNPOD_IMAGE_DEFAULT="runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04"   # SSH preconfigured, CUDA 11.8
+POD_RECORDS="$CM_DIR/logs/runpod"                        # one record per GPU pod this computer created, until it is deleted
+LAST_GPU_FILE="$CM_DIR/logs/last-gpu"             # the user's last GPU choice: gpu, cloud, project, date (tabs)
 mkdir -p "$CM_DIR/keys" "$CM_DIR/logs" "$REGISTRY"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -84,10 +96,11 @@ config_name() { grep -E '^PROJECT_NAME=' "$1" | head -1 | sed -E "s/^PROJECT_NAM
 check_no_secrets() {
   local bad
   bad="$(find "$PROJECT_DIR" -type f \( -name '.env*' -o -name '*.pem' -o -name '*.key' -o -name 'id_*' \) 2>/dev/null)"
-  bad="$bad$(grep -rlE '^[[:space:]]*(export[[:space:]]+)?HCLOUD_TOKEN=' "$PROJECT_DIR" 2>/dev/null || true)"
+  bad="$bad$(grep -rlE '^[[:space:]]*(export[[:space:]]+)?(HCLOUD_TOKEN|RUNPOD_API_KEY)=' "$PROJECT_DIR" 2>/dev/null || true)"
   [ -z "$bad" ] || die "$PROJECT_DIR contains files that look like secrets; move them out:
 $bad
-(the Hetzner token belongs only in $CM_DIR/.env; the project's own secrets stay where the project keeps them)"
+(the Hetzner token and the RunPod key belong only in $CM_DIR/.env; the project's own secrets stay where the
+project keeps them)"
 }
 
 # load_project <name> [target]: reads the project's .cloudmule/config.sh. A project with NEEDS_TARGET=1 (one
@@ -102,6 +115,7 @@ load_project() {
   NEEDS_TARGET=0; LOCAL_DIR=""; REMOTE_DIR=""; MODULES=""; SYNC_EXCLUDE=""; SYNC_SEEDS=""; ONESHOT_EXCLUDE=""
   INSTALL_CMD=""; INSTALL_TRIGGERS=""; INSTALL_CHECK=""; PROJECT_NAME=""
   MIN_RAM_GB=""; MIN_CPUS=""; MIN_DISK_GB=""
+  NEEDS_GPU=""; MIN_VRAM_GB=""; RUNPOD_IMAGE=""   # GPU work (RunPod pods): empty NEEDS_GPU = the project did not say
   local SERVER_TYPES=""   # only to notice an old setting in config.sh
   . "$PROJECT_DIR/config.sh"
   [ -z "$SERVER_TYPES" ] || echo "NOTE: SERVER_TYPES in $PROJECT_DIR/config.sh is ignored: the server is chosen with" \
@@ -127,6 +141,8 @@ load_project() {
   RAM_SRC=config; [ -n "$MIN_RAM_GB" ] || { MIN_RAM_GB=4; RAM_SRC=default; }
   CPUS_SRC=config; [ -n "$MIN_CPUS" ] || { MIN_CPUS=2; CPUS_SRC=default; }
   DISK_SRC=config; [ -n "$MIN_DISK_GB" ] || { MIN_DISK_GB=40; DISK_SRC=default; }
+  case "$NEEDS_GPU" in ""|0|graphics|cuda) ;; *) die "NEEDS_GPU in $PROJECT_DIR/config.sh must be 0, graphics or cuda" ;; esac
+  VRAM_SRC=config; [ -n "$MIN_VRAM_GB" ] || { MIN_VRAM_GB=8; VRAM_SRC=default; }
   PROJECT_ARCHS="$(module_archs base $MODULES)"
   LEASE="$PROJECT${TARGET:+--$TARGET}"   # this project's claim on the shared server
   # versioned modules (node@24.15.0) live in /opt/<module>/<version>: put this project's versions first on PATH
@@ -442,4 +458,57 @@ install_project() {
   [ "$need" = 1 ] || return 0
   echo "== Installing dependencies on the server =="
   remote_job "$LEASE-install" "$REMOTE_DIR" "$JOB_ENV; $INSTALL_CMD; ${INSTALL_CHECK:-true}"
+}
+
+# ---------------------------------------------------------------- RunPod GPU pods (docs/specs/0004)
+# Only for work that needs a GPU: one pod per job, never shared, deleted when the job ends. The API calls live in
+# tools.py (rp-*); the caps from .env are enforced there, also when the user approves each pod by hand.
+# rp_tools <rp-command> [args…]: tools.py with this computer's pod records and usage file
+rp_tools() {
+  tools "$@" --records "$(winpath "$POD_RECORDS")" --usage "$(winpath "$USAGE_FILE")" --keep-days "$USAGE_KEEP_DAYS"
+}
+
+# need_runpod: the RunPod key is in .env and the caps are numbers
+need_runpod() {
+  [ -n "${RUNPOD_API_KEY:-}" ] || die "RUNPOD_API_KEY is missing in $CM_DIR/.env. The user creates a RunPod API key
+that can manage pods and has \"catalog read\" permission (runpod.io -> Settings -> API Keys) and pastes it there
+themselves (see .env.example)."
+  local v
+  for v in RUNPOD_MAX_USD_PER_HOUR RUNPOD_MAX_MINUTES RUNPOD_MAX_USD_PER_DAY; do
+    [[ "${!v}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "$v in $CM_DIR/.env must be a number (it is '${!v}')"
+  done
+  case "$RUNPOD_STANDING_APPROVAL" in 0|1) ;; *) die "RUNPOD_STANDING_APPROVAL in $CM_DIR/.env must be 0 or 1" ;; esac
+}
+
+# gpu_budget: SPENT (today's GPU spend), RUNNING_WORST (the worst case of cloudmule pods running now), DAY_LEFT
+# (what the daily cap still allows; DAY_LEFT_SHOWN rounded for people), all in USD. Deletes orphan pods on the way
+# and says so. Fails closed: a number it cannot read stops the command instead of counting as 0.
+gpu_budget() {
+  local out num='^[0-9]+(\.[0-9]+)?$'
+  out="$(rp_tools rp-pods --max-minutes "$RUNPOD_MAX_MINUTES" --reap --worst)" \
+    || die "could not list the RunPod pods (reason above)"
+  printf '%s\n' "$out" | grep '^ORPHAN_DELETED' || true
+  RUNNING_WORST="$(printf '%s\n' "$out" | sed -n 's/^RUNNING_WORST_USD //p')"
+  SPENT="$(tools rp-spend "$(winpath "$USAGE_FILE")")" || die "could not read today's GPU spend from $USAGE_FILE"
+  [[ "$RUNNING_WORST" =~ $num ]] && [[ "$SPENT" =~ $num ]] \
+    || die "could not work out today's GPU spend (spent '$SPENT', running '$RUNNING_WORST'): no pod is created"
+  read -r SPENT RUNNING_WORST DAY_LEFT DAY_LEFT_SHOWN <<< "$(awk -v c="$RUNPOD_MAX_USD_PER_DAY" -v s="$SPENT" \
+    -v r="$RUNNING_WORST" 'BEGIN { printf "%.2f %.2f %.4f %.2f", s, r, c - s - r, c - s - r }')"
+}
+
+# last_gpu [--fields]: the user's last GPU choice, "<gpu> <cloud> (by <project>, <date>)" or "none yet";
+# --fields: "<gpu><TAB><cloud>" (empty if none)
+last_gpu() {
+  local g c p d
+  if [ ! -s "$LAST_GPU_FILE" ]; then [ "${1:-}" = --fields ] || echo "none yet"; return 0; fi
+  IFS=$'\t' read -r g c p d < "$LAST_GPU_FILE" || true
+  if [ "${1:-}" = --fields ]; then printf '%s\t%s\n' "$g" "$c"; else echo "$g $c (by $p, $d)"; fi
+}
+
+# cloud_name <secure|community|all>: the RunPod cloud(s) as the API names them
+cloud_name() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    secure) echo SECURE ;; community) echo COMMUNITY ;; all) echo "SECURE COMMUNITY" ;;
+    *) die "--cloud must be secure, community or all (not '${1:-}')" ;;
+  esac
 }

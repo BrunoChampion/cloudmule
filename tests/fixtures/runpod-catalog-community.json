@@ -1,0 +1,5 @@
+[
+  {"id": "NVIDIA GeForce RTX 3090", "displayName": "RTX 3090", "manufacturer": "Nvidia", "memory": 24, "price": {"secure": 0.43, "community": 0.22}, "availability": "HIGH"},
+  {"id": "NVIDIA GeForce RTX 5080", "displayName": "RTX 5080", "manufacturer": "Nvidia", "memory": 16, "price": {"secure": null, "community": 0.39}, "availability": "MEDIUM"},
+  {"id": "NVIDIA RTX PRO 4000 Blackwell", "displayName": "RTX PRO 4000", "manufacturer": "Nvidia", "memory": 24, "price": {"secure": 0.57, "community": null}, "availability": "NONE"}
+]

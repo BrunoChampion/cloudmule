@@ -29,7 +29,20 @@ export PATH="$REPO/tests/fake-hcloud:$PATH" FAKE_HC_LOG="$WORK/hcloud.log"
 chmod +x "$REPO/tests/fake-hcloud/hcloud" 2>/dev/null || true
 : > "$FAKE_HC_LOG"
 cm() { bash "$CM_HOME/bin/cloudmule" "$@" 2>&1; }
-run() { OUT="$(cm "$@")"; RC=$?; }   # sets OUT and RC
+ALL_OUT="$WORK/all-output.log"   # every output of `run`, to prove no secret is ever printed
+run() { OUT="$(cm "$@")"; RC=$?; printf '%s\n' "$OUT" >> "$ALL_OUT"; }   # sets OUT and RC
+if command -v python3 >/dev/null 2>&1 && python3 -c '' >/dev/null 2>&1; then PY=python3; else PY=python; fi
+
+# A fake RunPod API on 127.0.0.1 (tests/fake-runpod): no key, no network, no money. Each test sets its scenario.
+RP="$WORK/fake-runpod"; mkdir -p "$RP"
+"$PY" -I "$(winpath "$REPO/tests/fake-runpod/server.py")" "$(winpath "$RP")" >/dev/null 2>&1 &
+RP_PID=$!
+trap 'kill "$RP_PID" 2>/dev/null; rm -rf "$WORK"' EXIT
+for _ in $(seq 1 100); do [ -s "$RP/port" ] && break; sleep 0.1; done
+export RUNPOD_API_BASE="http://127.0.0.1:$(cat "$RP/port")/v2"
+RP_KEY="fake-runpod-key-for-tests"
+scenario() { local s="${1:-}"; [ -n "$s" ] || s='{}'; printf '%s\n' "$s" > "$RP/scenario.json"; rm -f "$RP/state.json"; }
+rp_log() { cat "$RP/requests.log" 2>/dev/null; }
 
 echo "== a clone"
 check "a clone has no .env, keys/, logs/ or registry/" \
@@ -236,6 +249,58 @@ check "usage <project> <target> shows only that target" bash -c "printf '%s\n' \
 run usage nobody
 check "usage of a project with no records says so" has "No job usage recorded yet"
 
+echo "== gpus (RunPod: the GPUs available now, against the project and the caps)"
+scenario
+run gpus videos
+check "gpus without a RunPod key asks for it (pasted by the user)" has "RUNPOD_API_KEY is missing"
+printf 'RUNPOD_API_KEY=%s\n' "$RP_KEY" >> "$CM_HOME/.env"
+# a GPU project: WebGL frames in headless Chrome
+GFX="$WORK/gfx"; mkdir -p "$GFX"; cm init "$GFX" --name gfx >/dev/null
+sed -e 's/^# NEEDS_GPU=.*/NEEDS_GPU=graphics/' -e 's/^# MIN_VRAM_GB=.*/MIN_VRAM_GB=8/' \
+  -e 's/^MODULES=.*/MODULES="node@24.15.0"/' -e 's/^INSTALL_CMD=.*/INSTALL_CMD=""/' \
+  "$GFX/.cloudmule/config.sh" > "$WORK/c" && mv "$WORK/c" "$GFX/.cloudmule/config.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho rendering\necho "CLOUDMULE_RESULT out/frame.png"\n' > "$GFX/.cloudmule/jobs/render.sh"
+run gpus gfx
+check "gpus succeeds" test "$RC" = 0
+check "gpus says what the project needs" has "Project gfx needs: a GPU for graphics work (NEEDS_GPU=graphics); VRAM >= 8 GB (config)"
+check "gpus shows the caps from .env" has "at most 0.70 USD/h per pod"
+check "gpus shows today's spend and what is left" has "Today's GPU spend: 0.00 USD, plus 0.00 USD worst case of pods running now: 2.00 USD left"
+check "gpus says the standing approval is off by default" has "Standing approval: off"
+check "gpus says there is no last choice yet" has "Last choice: none yet"
+check "a fitting GPU shows its price and worst case per pod" row_has "NVIDIA A40" "48 GB  SECURE      0.59    0.393  MEDIUM  fits"
+check "a GPU with too little VRAM does not fit" row_has "NVIDIA RTX A2000" "no: VRAM < 8 GB"
+check "a GPU above the hourly cap does not fit" row_has "NVIDIA H100 80GB HBM3" "no: above the hourly cap 0.70 USD/h"
+check "a GPU that is not NVIDIA does not fit" row_has "AMD Instinct MI300X OAM" "no: not NVIDIA"
+check "an unavailable GPU says so" row_has "NVIDIA RTX A4000" "no: none available now"
+check "COMMUNITY offers are listed as unusable (no public SSH)" row_has "NVIDIA GeForce RTX 5080" "no: no public SSH (community cloud)"
+check "the recommendation is the cheapest fitting GPU with MEDIUM or HIGH availability, not a cheaper LOW one" \
+  has "RECOMMENDED: NVIDIA A40 SECURE 0.59"
+check "every RunPod request carried the key" bash -c "! grep ' BAD$' '$RP/requests.log' >/dev/null"
+run gpus gfx --cloud community
+check "--cloud community lists only COMMUNITY offers" bash -c "! printf '%s\n' \"\$1\" | grep ' SECURE ' >/dev/null" _ "$OUT"
+OUT="$(RUNPOD_MAX_USD_PER_HOUR=5 RUNPOD_STANDING_APPROVAL=1 cm gpus gfx)"; printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "a cap given in the environment cannot raise the one in .env" row_has "NVIDIA H100 80GB HBM3" "above the hourly cap 0.70"
+check "a standing approval given in the environment does not count" has "Standing approval: off"
+sed 's/^MIN_VRAM_GB=8$/MIN_VRAM_GB=40/' "$GFX/.cloudmule/config.sh" > "$WORK/c" && mv "$WORK/c" "$GFX/.cloudmule/config.sh"
+run gpus gfx
+check "MIN_VRAM_GB rules out smaller GPUs" row_has "NVIDIA L4" "no: VRAM < 40 GB"
+sed 's/^MIN_VRAM_GB=40$/MIN_VRAM_GB=8/' "$GFX/.cloudmule/config.sh" > "$WORK/c" && mv "$WORK/c" "$GFX/.cloudmule/config.sh"
+run gpus my-app
+check "a project that does not say whether it needs a GPU is flagged, for the agent to ask" has "NEEDS_GPU is not set"
+# usage.tsv: a GPU pod deleted today that cost 1.80 USD (date … stall_s provider billed_s cost_usd)
+printf '%s\tgfx\t-\trender\tNVIDIA A40\t600\tn/a\tn/a\tn/a\tn/a\t0\tn/a\trunpod\t11000\t1.8000\n' "$NOW" >> "$CM_HOME/logs/usage.tsv"
+run gpus gfx
+check "today's spend comes from the usage lines" has "Today's GPU spend: 1.80 USD"
+check "a GPU whose worst case passes what is left today does not fit" row_has "NVIDIA A40" "passes today's cap (0.20 left)"
+check "with no MEDIUM/HIGH GPU left, the cheapest fitting one is recommended" has "RECOMMENDED: NVIDIA RTX 2000 Ada Generation SECURE 0.24"
+awk -F'\t' '$13 != "runpod"' "$CM_HOME/logs/usage.tsv" > "$WORK/u" && mv "$WORK/u" "$CM_HOME/logs/usage.tsv"
+scenario '{"catalog_status": 403}'; run gpus gfx
+check "a key without catalog permission is refused with the fix" has "\"catalog read\" permission"
+check "the 403 makes gpus fail" test "$RC" != 0
+scenario
+run gpus
+check "gpus without a project applies no VRAM need" row_has "NVIDIA RTX A2000" "fits"
+
 echo "== end --keep (the server cannot be reached: the save must still happen through the API)"
 : > "$WORK/before.log"; cp "$FAKE_HC_LOG" "$WORK/before.log"
 OUT="$(FAKE_HC_SCENARIO=running cm end videos --keep)"
@@ -249,6 +314,7 @@ check "end --keep keeps only the newest workspace snapshot" calls '^image delete
 check "end --keep does not delete the newest snapshot" bash -c "! printf '%s\n' \"\$1\" | grep -q '^image delete 1000002'" _ "$NEW"
 check "end --keep deletes the server" calls '^server delete cloudmule$'
 check "no test ever asked Hetzner to create a server" bash -c "! grep -q '^server create ' '$FAKE_HC_LOG'"
+check "the RunPod key never appears in any output" bash -c "! grep -F '$RP_KEY' '$ALL_OUT' >/dev/null"
 check "every Hetzner call was one the fake knows" bash -c "! grep -q '^UNHANDLED' '$FAKE_HC_LOG'"
 
 echo

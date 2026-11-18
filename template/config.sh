@@ -29,6 +29,16 @@ MODULES="node@24.15.0"
 # MIN_CPUS=4
 # MIN_DISK_GB=80
 
+# Does this project's work need a GPU? Then it runs on a RunPod GPU pod instead (`cloudmule gpu`), one pod per
+# job, deleted at the end. Not set = the project has not said: the agent asks the user.
+#   0         no GPU: everything runs on the Hetzner server (CPU only)
+#   graphics  WebGL / Vulkan / OpenGL in a browser (three.js renders in headless Chrome): installs Chrome + Vulkan
+#   cuda      CUDA compute (PyTorch, ML)
+# NEEDS_GPU=graphics   # e.g. "renders three.js frames in headless Chrome"
+# MIN_VRAM_GB=8        # GPU memory the work needs (default 8)
+# RUNPOD_IMAGE=runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04   # the pod's image (the default; SSH ready)
+# On a pod, MIN_DISK_GB is the pod's disk (default 30 GB there).
+
 # Never uploaded (space-separated). Without "/" = any file or folder with that name; with "/" = that exact path.
 SYNC_EXCLUDE="node_modules .git .env .env.* dist build .next .expo __pycache__ .venv *.log"
 # Heavy files the SERVER generates: uploaded only if missing there, never overwritten (unless --with-generated).
