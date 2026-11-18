@@ -1,6 +1,7 @@
 # Spec 0004 — RunPod as a second provider, for work that needs a GPU
 
-Status: agreed 2026-11-18, not started · Scope: the cloudmule repository only.
+Status: implemented and e2e-verified with real money 2026-11-18 (see Further Notes) · Scope: the cloudmule
+repository only.
 Vocabulary: see `CONTEXT.md` (shared server, lease, workspace, disk floor, last choice). New terms: **provider**,
 **GPU pod**, **standing approval** (defined below; add them to `CONTEXT.md`).
 
@@ -97,8 +98,12 @@ the user's choice (or a standing approval with hard limits), nothing is left run
 - **Refusals** (exit non-zero, one line, no pod created): `NEEDS_GPU_CHOICE` (no `--gpu`), `ABOVE_HOURLY_CAP`,
   `DAILY_CAP_REACHED`, `NO_GPU_AVAILABLE` (every candidate unavailable), `NEEDS_APPROVAL` (no standing approval and
   the skill did not pass `--approved`; see the skill section), `NO_PUBLIC_SSH` (pod ran but no public port 22 in
-  5 min: it is deleted).
-- **Pod naming:** `cloudmule-<project>[-<target>]-<job>`; the last choice is kept in `logs/last-gpu` (GPU id, cloud,
+  5 min: it is deleted). Added while implementing: `NEEDS_GPU_UNSET` (the project does not say graphics or cuda),
+  `NO_GPU_NEEDED` (`NEEDS_GPU=0`), `NO_FITTING_GPU` (VRAM, not NVIDIA, a MIG slice for graphics, not offered, or
+  `--cloud community`), `GPU_NOT_USED` (Chrome renders WebGL in software: the pod is deleted before the upload),
+  and `RUNPOD_UNKNOWN` from `status` (it could not check every pod; exit 1).
+- **Pod naming:** `cloudmule-<project>[-<target>]-<job>-<run tag>` (tag added after the e2e, see Further Notes);
+  the last choice is kept in `logs/last-gpu` (GPU id, cloud,
   project, date). RunPod has no labels like Hetzner's; one computer's last choice is enough for now.
 
 ### Safety
@@ -208,5 +213,35 @@ RUNPOD_STANDING_APPROVAL=0      # 1 = the agent may create GPU pods without aski
 - A working prototype of this flow (bash + curl) lives in the user's video project that needed it, under
   `tools/runpod/` (`rp.sh`, `run-bench.sh`, `pod-setup.sh`; ask the user for that folder). Use it as a reference for the real calls and the setup order, not as
   code to copy: cloudmule's version goes in `bin/tools.py` / `bin/lib.sh` with tests.
+- **e2e with real money, 2026-11-18** (cloudmule's `gpu`, two SECURE pods, about 0.09 USD in all):
+  - A probe job on an **A40 (0.59 USD/h)**: cheaper candidates were skipped (catalog `NONE`) or refused by RunPod
+    ("no longer any instances available"), as designed. Pod created → SSH, guard armed, `base chrome-libs
+    gpu-graphics` installed, WebGL check passed → job started: **about 3 minutes**. Chrome 158 from Google's signed
+    repository (key fingerprint check passed). WebGL renderer: `ANGLE (NVIDIA, Vulkan 1.4.329 (NVIDIA A40))`. Whole
+    pod: 5.8 min, about 0.057 USD; deleted by the EXIT trap.
+  - Verified: `GET /pods` returns `createdAt` (ISO, e.g. `2026-11-18T21:34:13.051Z`; `runtime` is empty in the
+    list), `status`, `cost`, `gpu.id`; pods get `RUNPOD_POD_ID` and a pod-scoped `RUNPOD_API_KEY` in
+    `/proc/1/environ`; `runpodctl` is at `/usr/bin/runpodctl`. The catalog lists GPUs a cloud does not offer at
+    price 0 (now treated as not offered) and MIG slices (now ruled out for `graphics`: no Vulkan/OpenGL on MIG).
+  - **In-pod guard (layer 3)**: on an RTX 4000 Ada (0.28 USD/h) with `RUNPOD_MAX_MINUTES=5`, the local `gpu`
+    process and the local watchdog were force-killed right after the guard was armed; the pod **deleted itself**
+    (gone from `GET /pods`, not just stopped) about 5 min after its creation. `status` then closed its record and
+    `usage` showed both jobs: probe 0.06 USD / 6 min (A40), long 0.02 USD / 5 min (RTX 4000 Ada), 0.08 USD in all.
+  - **Billing:** the key cannot read billing (HTTP 403 on `/billing/pods`). The owner's console showed the balance
+    going from 15.00 to 14.83 USD (0.17 USD) over the day, which also covers the prototype benchmark of the same day;
+    cloudmule estimated about 0.09 USD for its own three pods. Per-pod reconciliation: RunPod's Billing Explorer.
+  - (1) see Billing above; (2) `supportPublicIp`: **settled, not
+    available.** The catalog has no such field (its fields: availability, community, cudaVersions, id, manufacturer,
+    maxCount, memory, minRam, minVcpuCount, name, pool, price, secure), and `POST /pods` (REST v2) rejects it with
+    HTTP 422 "additional properties 'supportPublicIp' not allowed" (tried with the owner's approval on three
+    COMMUNITY GPUs; no pod was created). So COMMUNITY GPUs stay listed as "no public SSH, not usable", as decided
+    above for that case.
+  - Fixed after the run: each pod carries its own cap (`CLOUDMULE_MAX_MINUTES` in its env), so an orphan check on
+    any computer uses the pod's cap, not the checking computer's. **Verified** (a 3-minute pod, owner-approved):
+    `GET /pods` lists `env` as a dict, and `rp-pods` read the pod's own cap (7 min) instead of the local one (40). The run tag and the cleanup of
+    keys left by killed runs were added after the run and are covered by `tests/run.sh` only.
+  - Decided with the owner after the run: no network volume or kept pods; ~3 min of setup per video is fine.
+    Pods are never shared between sessions (a shared GPU renders slower); pod names carry a random per-run tag so
+    concurrent sessions never touch each other's pods.
 - Written 2026-11-18 after a GPU benchmark; the user asked that cloudmule offer Hetzner and RunPod and decide with
   the user from the project's needs.

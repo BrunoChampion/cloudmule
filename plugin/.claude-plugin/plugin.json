@@ -1,7 +1,7 @@
 {
   "name": "cloudmule",
-  "version": "0.3.0",
-  "description": "Run dependency installs, builds, tests, dev servers, browsers and renders on a Hetzner server rented by the hour instead of your computer.",
+  "version": "0.4.0",
+  "description": "Run dependency installs, builds, tests, dev servers, browsers and renders on a Hetzner server rented by the hour, or a RunPod GPU when the work needs one, instead of your computer.",
   "author": {
     "name": "Bruno Champion (NYVEX)"
   },
@@ -14,6 +14,8 @@
     "build",
     "tests",
     "ram",
-    "offload"
+    "offload",
+    "gpu",
+    "runpod"
   ]
 }

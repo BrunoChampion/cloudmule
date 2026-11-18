@@ -32,12 +32,18 @@ the moment one of them starts a build. With cloudmule, that build runs on a 16 v
   what never to upload, how to install dependencies, and one script per heavy task. No secrets ever go there.
 - **It can't run up a bill by itself.** A guard on the server deletes it after 45 idle minutes or 8 hours, even
   if your computer is off. Creating a server always needs your confirmation.
+- **Work that needs a GPU goes to [RunPod](https://www.runpod.io) instead** (optional): WebGL/three.js frames
+  rendered in headless Chrome, CUDA. One GPU pod per job, created, used and **deleted**; Hetzner has no GPUs, and
+  on a CPU such renders fall back to software, ~20× slower than a laptop. Your agent picks the provider from the
+  project's settings and asks you what it doesn't know.
 
 ## Requirements
 
 - A Hetzner Cloud account and an API token (Read & Write).
 - `bash`, `ssh`, `tar` and Python 3: built in on macOS and Linux; on Windows, [Git for Windows](https://gitforwindows.org/) (Git Bash) and Python 3.
 - [`hcloud`](https://github.com/hetznercloud/cli), Hetzner's official CLI (Windows: `winget install --id HetznerCloud.CLI --exact --source winget`, macOS: `brew install hcloud`).
+- Optional, for GPU work: a RunPod account with credit and an API key that can manage pods and has "catalog read"
+  permission (RunPod → Settings → API Keys), pasted into `.env` as `RUNPOD_API_KEY`.
 - Claude Code, for the skill (cloudmule also works by hand without it).
 
 Tested on Windows 11 with Git Bash. macOS and Linux should work (plain bash), but are not tested yet.
@@ -78,6 +84,13 @@ cloudmule usage my-app            # what each job used (peak RAM, cores, time), 
 
 (`cloudmule` here means `bash <cloudmule-folder>/bin/cloudmule`.) Run `cloudmule help` for every command.
 
+For work that needs a GPU (the project says `NEEDS_GPU=graphics` or `cuda` in `.cloudmule/config.sh`):
+
+```sh
+cloudmule gpus my-video                                   # GPUs available now, USD/h, worst case, caps (free)
+cloudmule gpu  my-video --gpu "NVIDIA A40" --approved render   # one pod: set up, upload, run, download, DELETE
+```
+
 ## What it costs
 
 - **Servers:** you choose the size each time one is created: `cloudmule servers` shows every type available now
@@ -89,24 +102,34 @@ cloudmule usage my-app            # what each job used (peak RAM, cores, time), 
   when you want to go smaller.
 - **Snapshots:** about €0.01 per GB per month for the saved workspace (dependencies and caches make it grow).
 - `cloudmule usage` shows what each job really used (peak RAM, cores), to pick the size with evidence.
+- **GPU pods (RunPod):** billed while they exist; the GPUs usually available within the default cap cost about
+  0.57–0.70 USD/h (measured: a 10-minute video rendered on an A40 at 0.59 USD/h is about 0.11 USD). Hard limits in `.env`, enforced by cloudmule even
+  when you approve each pod: `RUNPOD_MAX_USD_PER_HOUR` (0.70), `RUNPOD_MAX_MINUTES` per pod (40) and
+  `RUNPOD_MAX_USD_PER_DAY` (2.00). Every pod is deleted when its job ends, by a watchdog on your computer, and by
+  a guard inside the pod even if your computer is off. You approve each pod, unless you give your agent a
+  standing approval (`RUNPOD_STANDING_APPROVAL=1`), always within those limits. `cloudmule usage` shows what each
+  GPU job cost.
 
 ## Security
 
-- **Your token** stays in `.env` on your computer (git-ignored). On the server it only exists in memory
+- **Your Hetzner token** stays in `.env` on your computer (git-ignored). On the server it only exists in memory
   (`/run/cloudmule/token`), so it is never saved in a snapshot. Prefer one token per computer.
+- **Your RunPod key** (optional) also stays in `.env`; it is never sent to a pod (a pod deletes itself with its
+  own pod-scoped credentials). Each pod gets a one-time SSH key, deleted with it.
 - **Access to the server** is by SSH key only: one key per computer, registered in your Hetzner account.
 - **Your code is uploaded** to a server and snapshots in your Hetzner account. Exclude what must never leave
   your computer with `SYNC_EXCLUDE` (`.env` files are excluded by default).
 - **A project's `.cloudmule/`** holds only commands and settings; cloudmule refuses to run if it finds files
   that look like secrets there.
-- cloudmule only talks to Hetzner through the official `hcloud` CLI.
-- No backend and no telemetry: nothing is sent to the author or anyone but Hetzner. Full details in
+- cloudmule only talks to Hetzner through the official `hcloud` CLI, and to RunPod through its REST API.
+- No backend and no telemetry: nothing is sent to the author or anyone but Hetzner (and RunPod, for GPU
+  jobs). Full details in
   [PRIVACY.md](PRIVACY.md).
 
 ## Uninstall
 
 ```sh
-cloudmule status                                   # make sure no server is running
+cloudmule status                                   # make sure no server or GPU pod is running
 hcloud image list -l managed-by=cloudmule          # delete snapshots you no longer want: hcloud image delete <id>
 hcloud ssh-key delete cloudmule-<computer-name>
 claude plugin uninstall cloudmule@cloudmule && claude plugin marketplace remove cloudmule
@@ -117,11 +140,13 @@ rm -rf ~/.config/cloudmule <cloudmule-folder>      # and each project's .cloudmu
 
 - Linux servers only: no iOS builds (they need macOS) and probably no Android emulator (no KVM).
 - One shared server: projects working at the same time share its CPU and RAM.
+- GPU pods: NVIDIA only, RunPod's SECURE cloud only (its COMMUNITY pods have no public SSH), one GPU per pod, and
+  cheap GPUs are often unavailable. Each pod installs Chrome and the project's tools again (~2 min).
 
 ## Contributing
 
-`bash tests/run.sh` runs the test suite: it needs no Hetzner account and spends nothing (it fakes the Hetzner
-CLI). Releases are also checked by hand with [`docs/e2e-checklist.md`](docs/e2e-checklist.md).
+`bash tests/run.sh` runs the test suite: it needs no Hetzner or RunPod account and spends nothing (it fakes the
+Hetzner CLI, RunPod's API and the SSH to pods). Releases are also checked by hand with [`docs/e2e-checklist.md`](docs/e2e-checklist.md).
 
 ## Credits
 

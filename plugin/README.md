@@ -3,7 +3,8 @@
 Your computer edits; a server you rent by the hour does the heavy lifting. This plugin adds the `cloudmule`
 skill to **Claude Code**: before running heavy work (dependency installs, builds, test suites, dev servers, test
 browsers, video renders), Claude runs it on a Hetzner Cloud server in **your own Hetzner account** and brings the
-results back, so your computer stays responsive.
+results back, so your computer stays responsive. Work that needs a GPU (WebGL rendering in a browser, CUDA)
+runs on a RunPod GPU pod instead, created for one job and deleted after it (optional, with your RunPod key).
 
 **Claude Code only.** The skill runs commands in a terminal, so it does nothing in Claude's chat or in Cowork.
 
@@ -28,7 +29,8 @@ Without that, the skill only tells you how to install it. To install the plugin 
 - Reads `~/.config/cloudmule/home` to find your cloudmule folder, then runs `bash <that folder>/bin/cloudmule …`.
   Claude Code asks for your permission as for any command.
 - **Before creating a server** (it bills by the hour), shows you the server types that fit your project and their
-  prices, and waits for your choice. It never creates a server without it.
+  prices, and waits for your choice. It never creates a server without it. The same for a GPU pod (GPUs available,
+  USD/h, worst case), unless you give it a standing approval, always within the hard limits in cloudmule's `.env`.
 - Uploads your project's files to that server over SSH (except what the project excludes; `.env` files are
   excluded by default), runs the project's jobs there, and downloads their results.
 - To set a project up, writes a `.cloudmule/` folder in it (settings and job scripts, never secrets) and a short
@@ -41,6 +43,8 @@ Without that, the skill only tells you how to install it. To install the plugin 
 - To **your own server**: your project's files, the job scripts, and your Hetzner token in its memory only (a RAM
   disk, never saved to disk or snapshots), so its cost guard can snapshot and delete the server when it is idle.
 - **Snapshots** of the server's disk stay in your Hetzner account until you delete them.
+- To the **RunPod API**, only for GPU jobs and only if you set it up: your RunPod key (never to a pod) and the pod
+  operations; to the pod: your project's files and job scripts (deleted with the pod).
 - Nothing is sent to the plugin's author or anyone else. No telemetry.
 
 Details: [PRIVACY.md](PRIVACY.md). Source and documentation: https://github.com/BrunoChampion/cloudmule.
