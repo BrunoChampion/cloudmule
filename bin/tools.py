@@ -971,6 +971,7 @@ def runpod_main(cmd, args):
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     sys.stdin.reconfigure(encoding="utf-8")
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd == "rp-spend":

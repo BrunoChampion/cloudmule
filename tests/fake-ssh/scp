@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake scp for the GPU pod tests: logs the download and pretends it worked.
+printf 'scp %s\n' "${*: -2}" >> "${FAKE_SSH_LOG:-/dev/null}"
+exit 0

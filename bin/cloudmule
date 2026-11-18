@@ -42,9 +42,15 @@
 #                                                   the GPUs available now, price, VRAM, whether each fits the
 #                                                   project and the caps, today's spend; ends with RECOMMENDED (no
 #                                                   cost; it deletes orphan pods: cloudmule's, past their time cap)
+#   cloudmule gpu     <project> [target] --gpu <id[,id…]> [--cloud secure] [--approved] [--dry-run] <job> [args…]
+#                                                   one job on a GPU pod: creates it (the first candidate available
+#                                                   within the caps), installs, uploads, runs .cloudmule/jobs/<job>.sh,
+#                                                   downloads its results and DELETES the pod. --approved: the user
+#                                                   said yes to this pod (not needed with a standing approval).
+#                                                   --dry-run: only show what it would create
 #
 # [target] is only for projects with NEEDS_TARGET=1 (one sub-folder per piece of work, e.g. per video).
-case "${1:-help}" in init|projects|usage|gpus|help|-h|--help) export CM_NO_TOKEN=1 ;; esac
+case "${1:-help}" in init|projects|usage|gpus|gpu|help|-h|--help) export CM_NO_TOKEN=1 ;; esac
 . "$(dirname "$0")/lib.sh"
 
 CMD="${1:-help}"; shift || true
@@ -79,6 +85,23 @@ create_options() {
   if [ -n "$CHOSEN_LOCATION" ]; then
     case " $LOCATIONS " in *" $CHOSEN_LOCATION "*) ;; *) die "location '$CHOSEN_LOCATION' is not in LOCATIONS ($LOCATIONS)" ;; esac
   fi
+}
+
+GPU_CHOICE=""; GPU_CLOUD=SECURE; APPROVED=0   # set by gpu's options
+
+# gpu_options <args…>: the leading --gpu/--cloud/--dry-run/--approved options of `gpu` into GPU_CHOICE etc.; the
+# job and its arguments stay in REST
+gpu_options() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --gpu) GPU_CHOICE="${2:?--gpu needs a GPU id (see: cloudmule gpus)}"; shift 2 ;;
+      --cloud) GPU_CLOUD="$(cloud_name "${2:-}")"; shift 2 ;;
+      --dry-run) DRY_RUN=1; shift ;;
+      --approved) APPROVED=1; shift ;;
+      *) break ;;
+    esac
+  done
+  REST=("$@")
 }
 
 # server_report: the running server's type; SERVER_BELOW_REQUIREMENTS if it is below this project's needs (not
@@ -133,8 +156,12 @@ Last choice: $(last_choice)"
   else arm_guard oneshot "$ONESHOT_IDLE_MINUTES" "$ONESHOT_MAX_HOURS"; fi
 }
 
-prepare_project() {   # everything a project needs on the server before running jobs
+prepare_project() {   # everything a project needs on the shared server before running jobs
   lease_add
+  setup_project "${1:-}"
+}
+
+setup_project() {   # modules, the project's server-setup.sh, upload, dependencies (server or GPU pod)
   ensure_modules
   server_setup
   echo "== Syncing $PROJECT ${TARGET:-} =="
@@ -144,8 +171,8 @@ prepare_project() {   # everything a project needs on the server before running 
 
 run_job() {   # run_job <job> [args…]
   local job="$1"; shift
-  local script="$PROJECT_DIR/jobs/$job.sh" args="" a
-  [ -f "$script" ] || die "no job '$job' ($script). Jobs: $(ls "$PROJECT_DIR/jobs" 2>/dev/null | sed 's/\.sh$//' | tr '\n' ' ')"
+  local script args="" a
+  script="$(job_script "$job")"
   rsh "mkdir -p $R/scripts && cat > $R/scripts/$LEASE-$job.sh" < "$script"
   for a in "$@"; do args+=" $(printf '%q' "$a")"; done
   remote_job "$LEASE-$job" "$REMOTE_DIR" "$JOB_ENV; TARGET=$(printf '%q' "${TARGET:-}") bash $R/scripts/$LEASE-$job.sh$args"
@@ -466,6 +493,53 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     IFS=$'\t' read -r last_g last_c <<< "$(last_gpu --fields)" || true
     rp_tools rp-gpus --clouds "$CLOUDS" --min-vram "$MIN_VRAM_GB" --max-usd "$RUNPOD_MAX_USD_PER_HOUR" \
       --max-minutes "$RUNPOD_MAX_MINUTES" --day-left "$DAY_LEFT" --last-gpu "${last_g:-}" --last-cloud "${last_c:-}"
+    ;;
+
+  gpu)
+    take_project "$@"; gpu_options "${REST[@]+"${REST[@]}"}"; set -- "${REST[@]+"${REST[@]}"}"
+    [ $# -ge 1 ] || die "missing the job name"
+    gpu_refusals "$1"
+    need_runpod
+    gpu_budget
+    RUN="$(date +%Y%m%d%H%M%S)-$$"
+    # the pod's disk: the project's MIN_DISK_GB if it sets one; else 30 GB (the image, Chrome and Node fit; the
+    # Hetzner default of 40 is sized for the shared server and its workspace)
+    POD_DISK="$MIN_DISK_GB"; [ "$DISK_SRC" = config ] || POD_DISK=30
+    LAUNCH=(--candidates "$GPU_CHOICE" --cloud "$GPU_CLOUD" --min-vram "$MIN_VRAM_GB"
+            --max-usd "$RUNPOD_MAX_USD_PER_HOUR" --max-minutes "$RUNPOD_MAX_MINUTES" --day-left "$DAY_LEFT"
+            --name "$(pod_name "$1")" --image "${RUNPOD_IMAGE:-$RUNPOD_IMAGE_DEFAULT}" --disk "$POD_DISK"
+            --run "$RUN" --project "$PROJECT" --target "${TARGET:--}" --job "$1")
+    if [ "$DRY_RUN" = 1 ]; then rp_tools rp-launch "${LAUNCH[@]}" --dry-run; exit 0; fi
+    # a throwaway SSH key for this pod only (pods are never shared), deleted with it
+    POD_KEY="$CM_DIR/keys/pod-$RUN"
+    ssh-keygen -q -t ed25519 -N "" -C "cloudmule-pod" -f "$POD_KEY"
+    WATCHDOG=""
+    trap pod_finish EXIT
+    trap 'exit 130' INT TERM HUP
+    pod_watchdog
+    launched="$(rp_tools rp-launch "${LAUNCH[@]}" --pubkey-file "$(winpath "$POD_KEY.pub")")"
+    POD_T0=$(date +%s)
+    IFS=$'\t' read -r _ POD_ID POD_COST POD_GPU <<< "$(printf '%s\n' "$launched" | grep '^POD' || true)"
+    [ -n "${POD_ID:-}" ] || die "rp-launch reported no pod (output: $launched)"
+    echo "GPU pod $POD_ID created: $POD_GPU, $POD_COST USD/h ($GPU_CLOUD). It is deleted when the job ends, and at the"
+    echo "  latest after $RUNPOD_MAX_MINUTES min (worst case $(awk -v c="$POD_COST" -v m="$RUNPOD_MAX_MINUTES" \
+      'BEGIN { printf "%.2f", c * m / 60 }') USD)."
+    printf '%s\t%s\t%s\t%s\n' "$POD_GPU" "$GPU_CLOUD" "$PROJECT" "$(date +%Y-%m-%d)" > "$LAST_GPU_FILE"
+    addr="$(rp_tools rp-wait "$POD_ID" --timeout "$RUNPOD_BOOT_SECONDS" --interval "$RUNPOD_POLL_SECONDS")"
+    pod_ssh $addr
+    wait_ssh "$RUNPOD_BOOT_SECONDS" || die "NO_PUBLIC_SSH: the GPU pod did not answer over SSH"
+    pod_guard
+    MODULES="$(gpu_modules)"
+    USAGE_SINK=/dev/null   # setup jobs: the pod's one usage line is written when it is deleted
+    ensure_modules
+    if [ "$NEEDS_GPU" = graphics ]; then   # a silent software fallback is ~100x slower: stop before uploading
+      rsh cloudmule-webgl-check || die "GPU_NOT_USED: Chrome renders WebGL in software on this pod, not on its GPU"
+    fi
+    SYNC_EXCLUDE="$SYNC_EXCLUDE ${ONESHOT_EXCLUDE:-}"
+    setup_project
+    USAGE_SINK="$POD_KEY.measure"
+    run_job "$@"
+    echo "GPU_OK: $1"
     ;;
 
   usage)

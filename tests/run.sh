@@ -301,6 +301,108 @@ scenario
 run gpus
 check "gpus without a project applies no VRAM need" row_has "NVIDIA RTX A2000" "fits"
 
+echo "== gpu (one job on a RunPod GPU pod, deleted at the end)"
+posts() { grep -c '^POST /v2/pods ' "$RP/requests.log" 2>/dev/null || true; }
+pods_left() { "$PY" -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["pods"]))' "$(winpath "$RP/state.json")" 2>/dev/null || echo 0; }
+FAKE_SSH_LOG="$WORK/ssh.log"; export FAKE_SSH_LOG
+gpu_run() { OUT="$(PATH="$REPO/tests/fake-ssh:$PATH" cm gpu "$@")"; RC=$?; printf '%s\n' "$OUT" >> "$ALL_OUT"; }
+scenario; : > "$RP/requests.log"
+run gpu gfx render
+check "gpu without --gpu is refused, asking for the user's choice" has "NEEDS_GPU_CHOICE"
+run gpu gfx --gpu "NVIDIA A40" render
+check "gpu without standing approval or --approved is refused" has "NEEDS_APPROVAL"
+check "the approval refusal fails" test "$RC" != 0
+printf 'NEEDS_GPU=0\n' >> "$BIG/.cloudmule/config.sh"; run gpu big --gpu "NVIDIA A40" --approved example
+check "a project that says NEEDS_GPU=0 is refused" has "NO_GPU_NEEDED"
+run gpu gfx --gpu "NVIDIA A40" --dry-run render
+check "--dry-run says what it would create, with the worst case" has "WOULD_CREATE: NVIDIA A40 SECURE 0.59 0.393"
+run gpu gfx --gpu "NVIDIA H100 80GB HBM3" --approved render
+check "a GPU above the hourly cap is refused" has "ABOVE_HOURLY_CAP"
+printf '%s\tgfx\t-\trender\tNVIDIA A40\t600\tn/a\tn/a\tn/a\tn/a\t0\tn/a\trunpod\t11000\t1.9500\n' "$NOW" >> "$CM_HOME/logs/usage.tsv"
+run gpu gfx --gpu "NVIDIA A40" --approved render
+check "a pod whose worst case passes today's cap is refused" has "DAILY_CAP_REACHED"
+awk -F'\t' '$13 != "runpod"' "$CM_HOME/logs/usage.tsv" > "$WORK/u" && mv "$WORK/u" "$CM_HOME/logs/usage.tsv"
+check "no refusal ever asked RunPod to create a pod" test "$(posts)" = 0
+
+# candidates in order: the first is not available, the second is billed above the cap (deleted at once), the
+# third runs the job
+scenario '{"unavailable": ["NVIDIA RTX PRO 4000 Blackwell"], "cost": {"NVIDIA L4": 0.89}}'; : > "$RP/requests.log"; : > "$FAKE_SSH_LOG"
+gpu_run gfx --gpu "NVIDIA RTX PRO 4000 Blackwell,NVIDIA L4,NVIDIA A40" --approved render
+check "gpu runs the job on the pod" has "GPU_OK: render"
+check "an unavailable candidate is skipped" has "NVIDIA RTX PRO 4000 Blackwell: not created (There are no longer any instances"
+check "a pod billed above the hourly cap is deleted at once" has "NVIDIA L4: RunPod charges 0.89 USD/h, above the hourly cap"
+check "the candidates were tried in order" bash -c "grep -o '\"id\": \"NVIDIA[^\"]*\"' '$RP/requests.log' | tr '\n' '|' \
+  | grep -F '\"id\": \"NVIDIA RTX PRO 4000 Blackwell\"|\"id\": \"NVIDIA L4\"|\"id\": \"NVIDIA A40\"|' >/dev/null"
+check "the above-cap pod was deleted" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/requests.log"
+check "it reports the GPU and price used" has "GPU pod fakepod2 created: NVIDIA A40, 0.59 USD/h (SECURE)"
+check "the pod is created with the SSH key and the graphics capability, on the default image" \
+  bash -c "grep -F '\"PUBLIC_KEY\": \"ssh-ed25519 ' '$RP/requests.log' | grep -F 'NVIDIA_DRIVER_CAPABILITIES\": \"all' \
+    | grep -F 'runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04' >/dev/null"
+check "the pod is named after the project and the job" grep -qF '"name": "cloudmule-gfx-render"' "$RP/requests.log"
+check "the pod guard starts first thing after SSH" bash -c "sed -n 2p '$FAKE_SSH_LOG' | grep -F 'pod-guard.sh' >/dev/null"
+check "graphics projects get chrome-libs and gpu-graphics before their own modules" \
+  bash -c "grep -o 'module-[a-z-]*' '$FAKE_SSH_LOG' | uniq | tr '\n' ' ' | grep 'module-chrome-libs module-gpu-graphics module-node' >/dev/null"
+check "graphics projects check that Chrome renders on the GPU before uploading" \
+  bash -c "grep -n -e '^cloudmule-webgl-check\$' -e 'find . ' '$FAKE_SSH_LOG' | head -1 | grep webgl >/dev/null"
+check "the job's results are downloaded" has "RESULT: $GFX/out/frame.png"
+check "the pod is deleted when the job ends" grep -q '^DELETE /v2/pods/fakepod2 ' "$RP/requests.log"
+check "it reports what the pod cost" has "GPU pod fakepod2 deleted: NVIDIA A40, 0.59 USD/h"
+check "no pod is left" test "$(pods_left)" = 0
+check "the pod's usage line records the GPU, provider and cost" \
+  bash -c "awk -F'\t' '\$4==\"render\" && \$5==\"NVIDIA A40\" && \$6==\"90\" && \$13==\"runpod\" && \$15 ~ /^[0-9.]+\$/' '$CM_HOME/logs/usage.tsv' | grep . >/dev/null"
+check "the above-cap pod's few seconds are recorded too" \
+  bash -c "awk -F'\t' '\$5==\"NVIDIA L4\" && \$13==\"runpod\"' '$CM_HOME/logs/usage.tsv' | grep . >/dev/null"
+check "the throwaway SSH key is deleted with the pod" bash -c "! ls '$CM_HOME/keys' | grep '^pod-' >/dev/null"
+check "no pod record is left" bash -c "[ -z \"\$(ls '$CM_HOME/logs/runpod' 2>/dev/null)\" ]"
+check "the RunPod key is never sent to the pod" bash -c "! grep -F '$RP_KEY' '$RP/requests.log' '$FAKE_SSH_LOG' >/dev/null"
+run gpus gfx
+check "gpus then shows the last GPU choice" has "Last choice: NVIDIA A40 SECURE (by gfx, $(date +%Y-%m-%d))"
+check "the row of the last choice is marked" row_has "NVIDIA A40" "fits (last choice)"
+
+scenario '{"no_public_ssh": true}'; : > "$RP/requests.log"
+OUT="$(RUNPOD_BOOT_SECONDS=2 RUNPOD_POLL_SECONDS=1 PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved render)"; RC=$?
+printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "a pod without public SSH is refused with NO_PUBLIC_SSH" has "NO_PUBLIC_SSH"
+check "...and deleted" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/requests.log"
+check "...and the command fails" test "$RC" != 0
+
+scenario; : > "$RP/requests.log"
+OUT="$(FAKE_SSH_FAIL=render PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved render)"; RC=$?
+printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "a failing job makes gpu fail" test "$RC" != 0
+check "a failing job still deletes the pod" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/requests.log"
+check "no pod is left after a failure" test "$(pods_left)" = 0
+
+scenario; : > "$RP/requests.log"; : > "$FAKE_SSH_LOG"
+OUT="$(FAKE_SSH_WEBGL=software PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved render)"; RC=$?
+printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "Chrome rendering in software stops the run (GPU_NOT_USED)" has "GPU_NOT_USED"
+check "...before the project is uploaded" bash -c "! grep 'find . ' '$FAKE_SSH_LOG' >/dev/null"
+check "...and the pod is deleted" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/requests.log"
+
+scenario; : > "$RP/requests.log"
+OUT="$(FAKE_SSH_DOWN=1 RUNPOD_BOOT_SECONDS=2 PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved render)"; RC=$?
+printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "a pod that never answers SSH is refused" has "did not answer over SSH"
+check "...and deleted" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/requests.log"
+
+# the local watchdog: with a 3-second time cap, it deletes the pod while the command is still waiting for SSH
+scenario; : > "$RP/requests.log"
+printf 'RUNPOD_MAX_MINUTES=0.05\n' >> "$CM_HOME/.env"
+OUT="$(FAKE_SSH_DOWN=1 RUNPOD_BOOT_SECONDS=10 PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved render)"; RC=$?
+printf '%s\n' "$OUT" >> "$ALL_OUT"
+sed '/^RUNPOD_MAX_MINUTES=0.05$/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
+check "the watchdog deletes the pod at the time cap, even while the command is busy" \
+  bash -c "[ \"\$(grep -c '^DELETE /v2/pods/fakepod1 ' '$RP/requests.log')\" = 1 ] && ! printf '%s' \"\$1\" | grep 'GPU pod fakepod1 deleted' >/dev/null" _ "$OUT"
+check "...and records what the pod cost" \
+  bash -c "awk -F'\t' '\$13==\"runpod\"' '$CM_HOME/logs/usage.tsv' | tail -1 | awk -F'\t' '\$14 < 10' | grep . >/dev/null"
+
+scenario; : > "$RP/requests.log"
+printf 'RUNPOD_STANDING_APPROVAL=1\n' >> "$CM_HOME/.env"
+gpu_run gfx --gpu "NVIDIA A40" render
+check "with a standing approval in .env, gpu runs without --approved" has "GPU_OK: render"
+sed '/^RUNPOD_STANDING_APPROVAL=1$/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
+
 echo "== end --keep (the server cannot be reached: the save must still happen through the API)"
 : > "$WORK/before.log"; cp "$FAKE_HC_LOG" "$WORK/before.log"
 OUT="$(FAKE_HC_SCENARIO=running cm end videos --keep)"

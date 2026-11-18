@@ -53,6 +53,7 @@ RUNPOD_POLL_SECONDS=${RUNPOD_POLL_SECONDS:-10}
 RUNPOD_IMAGE_DEFAULT="runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04"   # SSH preconfigured, CUDA 11.8
 POD_RECORDS="$CM_DIR/logs/runpod"                        # one record per GPU pod this computer created, until it is deleted
 LAST_GPU_FILE="$CM_DIR/logs/last-gpu"             # the user's last GPU choice: gpu, cloud, project, date (tabs)
+USAGE_SINK=""                                     # set only by `gpu` (see usage_sink)
 mkdir -p "$CM_DIR/keys" "$CM_DIR/logs" "$REGISTRY"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -87,6 +88,13 @@ project_names() { ls "$REGISTRY" 2>/dev/null | tr '\n' ' '; }
 project_paths() {
   [ -f "$REGISTRY/$1" ] || return 1
   PROJECT_ROOT="$(cat "$REGISTRY/$1")"; PROJECT_DIR="$PROJECT_ROOT/.cloudmule"
+}
+
+# job_script <job>: the path of the project's .cloudmule/jobs/<job>.sh (dies listing the jobs if there is none)
+job_script() {
+  [ -f "$PROJECT_DIR/jobs/$1.sh" ] \
+    || die "no job '$1' ($PROJECT_DIR/jobs/$1.sh). Jobs: $(ls "$PROJECT_DIR/jobs" 2>/dev/null | sed 's/\.sh$//' | tr '\n' ' ')"
+  printf '%s' "$PROJECT_DIR/jobs/$1.sh"
 }
 
 # config_name <config.sh>: the PROJECT_NAME it declares
@@ -165,14 +173,16 @@ need_server() {
 rsh() { ssh "${SSH_OPTS[@]}" "root@$IP" "$@"; }
 rsh_tty() { ssh -t "${SSH_OPTS[@]}" "root@$IP" "$@"; }
 
+# wait_ssh [seconds]: waits until the server (or a GPU pod) answers over SSH, for at most about <seconds> (180)
 wait_ssh() {
-  local _
-  for _ in $(seq 1 60); do
-    if rsh true 2>/dev/null; then return 0; fi
+  local limit="${1:-180}" t0; t0=$(date +%s)
+  until rsh true 2>/dev/null; do
+    if [ $(( $(date +%s) - t0 )) -ge "$limit" ]; then
+      echo "ERROR: no answer over SSH within $limit s" >&2
+      return 1
+    fi
     sleep 3
   done
-  echo "ERROR: the server did not answer over SSH within 3 min" >&2
-  return 1
 }
 
 forget_host() { [ -f "$KNOWN" ] && ssh-keygen -f "$KNOWN" -R "$1" >/dev/null 2>&1 || true; }
@@ -305,7 +315,7 @@ ensure_modules() {
   missing="$(rsh "for s in base $MODULES; do test -f $R/mod/\$s || printf ' %s' \"\$s\"; done")"
   [ -n "$missing" ] || return 0
   echo "== Installing on the server:$missing =="
-  tar cf - -C "$CM_DIR/remote" modules | rsh "mkdir -p $R && rm -rf $R/modules && tar xf - -C $R"
+  tar cf - -C "$CM_DIR/remote" modules | rsh "mkdir -p $R && rm -rf $R/modules && tar --no-same-owner -xf - -C $R"
   for spec in $missing; do
     m="${spec%%@*}"; v=""; [ "$spec" = "$m" ] || v="${spec#*@}"
     remote_job "module-$m" /root "set -euo pipefail; export DEBIAN_FRONTEND=noninteractive VERSION=$(printf '%q' "$v"); \
@@ -382,6 +392,14 @@ remote_job() {
   remote_wait "$name"
 }
 
+# usage_sink <remote job name>: stores the measurement lines on stdin as usage lines. A GPU pod sets USAGE_SINK
+# instead (a file, or /dev/null for its setup jobs): its one usage line, with the cost, is written when the pod is
+# deleted.
+usage_sink() {
+  if [ -n "${USAGE_SINK:-}" ]; then cat >> "$USAGE_SINK"
+  else tools usage-add "$(winpath "$USAGE_FILE")" "$USAGE_KEEP_DAYS" "${PROJECT:--}" "${TARGET:-}" "$(job_label "$1")"; fi
+}
+
 # job_label <remote job name>: the job's name without its lease or project prefix (for its usage line)
 job_label() {
   local n="$1"
@@ -408,8 +426,7 @@ remote_wait() {
   # `mv` is atomic, so of a `job` and an `attach` collecting at the same moment only one gets the file
   rsh "for f in $R/jobs/$name.usage.prev $R/jobs/$name.usage; do
          mv \"\$f\" \"\$f.\$\$\" 2>/dev/null && cat \"\$f.\$\$\" && rm -f \"\$f.\$\$\"; done; true" 2>/dev/null \
-    | tools usage-add "$(winpath "$USAGE_FILE")" "$USAGE_KEEP_DAYS" "${PROJECT:--}" "${TARGET:-}" "$(job_label "$name")" \
-    || true
+    | usage_sink "$name" || true
   tools prune-logs "$(winpath "$CM_DIR/logs")" "$LOG_KEEP_DAYS" || true
   if [ "$last" != "EXIT 0" ]; then
     echo "ERROR: '$name' failed ($last). Log: $LAST_LOG" >&2
@@ -441,7 +458,7 @@ sync_project() {
     | tools sync-plan "$(winpath "$LOCAL_DIR")" "$(winpath "$plist")" "$(winpath "$dlist")" \
         --exclude "$SYNC_EXCLUDE" --seeds "$SYNC_SEEDS" $flag
   start=$(date +%s)
-  if [ -s "$plist" ]; then tar cf - -C "$LOCAL_DIR" -T "$plist" | rsh "tar xf - -C '$REMOTE_DIR'"; fi
+  if [ -s "$plist" ]; then tar cf - -C "$LOCAL_DIR" -T "$plist" | rsh "tar --no-same-owner -xf - -C '$REMOTE_DIR'"; fi   # (a pod's container cannot chown)
   if [ -s "$dlist" ]; then rsh "cd '$REMOTE_DIR' && xargs -d '\n' rm -f --" < "$dlist"; fi
   SYNC_CHANGED="$(cat "$plist")"
   echo "SYNC_OK in $(( $(date +%s) - start )) s"
@@ -463,10 +480,12 @@ install_project() {
 # ---------------------------------------------------------------- RunPod GPU pods (docs/specs/0004)
 # Only for work that needs a GPU: one pod per job, never shared, deleted when the job ends. The API calls live in
 # tools.py (rp-*); the caps from .env are enforced there, also when the user approves each pod by hand.
-# rp_tools <rp-command> [args…]: tools.py with this computer's pod records and usage file
-rp_tools() {
-  tools "$@" --records "$(winpath "$POD_RECORDS")" --usage "$(winpath "$USAGE_FILE")" --keep-days "$USAGE_KEEP_DAYS"
+# rp_files: RP_FILES = the options every rp-* command takes: this computer's pod records and usage file
+rp_files() {
+  RP_FILES=(--records "$(winpath "$POD_RECORDS")" --usage "$(winpath "$USAGE_FILE")" --keep-days "$USAGE_KEEP_DAYS")
 }
+# rp_tools <rp-command> [args…]: tools.py with the pod records and usage file
+rp_tools() { rp_files; tools "$@" "${RP_FILES[@]}"; }
 
 # need_runpod: the RunPod key is in .env and the caps are numbers
 need_runpod() {
@@ -511,4 +530,74 @@ cloud_name() {
     secure) echo SECURE ;; community) echo COMMUNITY ;; all) echo "SECURE COMMUNITY" ;;
     *) die "--cloud must be secure, community or all (not '${1:-}')" ;;
   esac
+}
+
+# gpu_refusals <job>: every reason not to create a pod, checked before anything is created (each one line, with
+# its code first, exit non-zero). The caps are checked by rp-launch, also before creating.
+gpu_refusals() {
+  job_script "$1" >/dev/null
+  [ "$NEEDS_GPU" != 0 ] || die "NO_GPU_NEEDED: $PROJECT_DIR/config.sh says NEEDS_GPU=0 (CPU work runs on the Hetzner server); set NEEDS_GPU=graphics or cuda there if this work needs a GPU"
+  [ -n "$GPU_CHOICE" ] || die "NEEDS_GPU_CHOICE: show the options (cloudmule gpus $PROJECT${TARGET:+ $TARGET}), wait for the user's choice, then add --gpu <id>[,<id>…] (last choice: $(last_gpu))"
+  [ "$GPU_CLOUD" = SECURE ] || die "NO_PUBLIC_SSH: COMMUNITY pods have no public SSH; only --cloud secure can be used"
+  case " $(module_archs base $(gpu_modules)) " in *" x86 "*) ;;
+    *) die "NO_FITTING_GPU: GPU pods are x86, but a module in MODULES is not ($MODULES)" ;; esac
+  [ "$DRY_RUN" = 1 ] || [ "$RUNPOD_STANDING_APPROVAL" = 1 ] || [ "$APPROVED" = 1 ] || die "NEEDS_APPROVAL: show the user the GPU, its price and worst case (cloudmule gpus $PROJECT${TARGET:+ $TARGET}), wait for their yes, then add --approved (or the user sets RUNPOD_STANDING_APPROVAL=1 in cloudmule's .env)"
+}
+
+# gpu_modules: the modules a pod installs, in order: for graphics work chrome-libs and gpu-graphics come first;
+# each module once
+gpu_modules() {
+  local m out=""
+  [ "$NEEDS_GPU" != graphics ] || out="chrome-libs gpu-graphics"
+  for m in $MODULES; do case " $out " in *" $m "*) ;; *) out="$out $m" ;; esac; done
+  printf '%s' "${out# }"
+}
+
+# pod_name <job>: cloudmule-<project>[-<target>]-<job> (cloudmule's pods are recognised by the prefix)
+pod_name() { printf 'cloudmule-%s%s-%s' "$PROJECT" "${TARGET:+-$TARGET}" "$1" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-100; }
+
+# seconds_of <minutes>: whole seconds (the caps may have decimals)
+seconds_of() { awk -v m="$1" 'BEGIN { printf "%d", m * 60 }'; }
+
+# pod_watchdog: layer 2 of 3 (with the EXIT trap and the pod guard). A detached local process that deletes this
+# run's pods after RUNPOD_MAX_MINUTES, even if this command is killed. Started before the pod is created.
+pod_watchdog() {
+  rp_files
+  nohup "$PY" -I "$CM_DIR/bin/tools.py" rp-reap --run "$RUN" --after "$(seconds_of "$RUNPOD_MAX_MINUTES")" \
+    --measure "$(winpath "$POD_KEY.measure")" "${RP_FILES[@]}" >/dev/null 2>&1 < /dev/null &
+  WATCHDOG=$!
+}
+
+# pod_finish: layer 1, the EXIT trap of `gpu`: deletes this run's pod (and records its usage line with the cost),
+# then the throwaway key. Keeps the command's exit code.
+pod_finish() {
+  local rc=$?
+  trap - EXIT INT TERM HUP
+  rm -f "$POD_KEY" "$POD_KEY.pub" "$POD_KEY.known_hosts"
+  if rp_tools rp-delete --run "$RUN" --measure "$(winpath "$POD_KEY.measure")"; then
+    [ -z "${WATCHDOG:-}" ] || kill "$WATCHDOG" 2>/dev/null || true   # its work is done
+    rm -f "$POD_KEY.measure"
+  else   # the watchdog still has the measurement for the pod's usage line
+    echo "WARNING: the GPU pod of this run could not be deleted now. The watchdog retries after $RUNPOD_MAX_MINUTES" \
+         "min and the pod deletes itself; check with 'cloudmule status'." >&2
+  fi
+  exit "$rc"
+}
+
+# pod_ssh <ip> <port>: IP and SSH_OPTS for this run's pod: its throwaway key and its own known_hosts
+pod_ssh() {
+  IP="$1"
+  SSH_OPTS=(-i "$POD_KEY" -o IdentitiesOnly=yes -o Port="$2" -o UserKnownHostsFile="$POD_KEY.known_hosts"
+            -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=6
+            -o ConnectTimeout=10 -o LogLevel=ERROR)
+}
+
+# pod_guard: layer 3, the guard INSIDE the pod (remote/pod-guard.sh): deletes the pod when its time is up, with
+# the pod's own credentials, even if this computer is off. Started first thing after SSH answers.
+pod_guard() {
+  local left=$(( $(seconds_of "$RUNPOD_MAX_MINUTES") - ( $(date +%s) - POD_T0 ) ))
+  [ "$left" -gt 0 ] || left=1
+  rsh "mkdir -p $R && cat > $R/pod-guard.sh && { nohup setsid bash $R/pod-guard.sh $left > $R/pod-guard.log 2>&1 < /dev/null & }" \
+    < "$CM_DIR/remote/pod-guard.sh"
+  echo "Pod guard armed: the pod deletes itself in $(( left / 60 )) min even if this computer is off."
 }
