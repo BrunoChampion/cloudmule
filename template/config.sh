@@ -36,8 +36,16 @@ MODULES="node@24.15.0"
 #   cuda      CUDA compute (PyTorch, ML)
 # NEEDS_GPU=graphics   # e.g. "renders three.js frames in headless Chrome"
 # MIN_VRAM_GB=8        # GPU memory the work needs (default 8)
-# RUNPOD_IMAGE=runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04   # the pod's image (the default; SSH ready)
+# RUNPOD_IMAGE=runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04   # the pod's image (SSH ready). Defaults:
+#                             # graphics: cloudmule's prebuilt image (Chrome, Node, ffmpeg) once published
 # On a pod, MIN_DISK_GB is the pod's disk (default 30 GB there).
+# GPU_SELFTEST=gpu-selftest   # a job (jobs/<name>.sh) that must pass on the pod before the real job, with the same
+#                             # arguments: e.g. render 3-4 frames and compare them (SSIM) with frames rendered locally.
+#                             # If it fails: GPU_SELFTEST_FAILED, its results are downloaded, the pod is deleted.
+# GPU_GRAPHICS_BACKEND=gl-egl # graphics only: Chrome's WebGL backend. gl-egl (ANGLE over OpenGL ES/EGL) is the default;
+#                             # vulkan only if your page survives the context-loss check (cloudmule-webgl-check).
+# Files for the jobs (helpers they `source`, reference frames…) go in .cloudmule/files/: uploaded to
+# $REMOTE_DIR/.cloudmule-files, given to jobs as $CLOUDMULE_FILES. The rest of .cloudmule/ is never uploaded.
 
 # Never uploaded (space-separated). Without "/" = any file or folder with that name; with "/" = that exact path.
 SYNC_EXCLUDE="node_modules .git .env .env.* dist build .next .expo __pycache__ .venv *.log"

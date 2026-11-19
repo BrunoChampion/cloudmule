@@ -60,6 +60,7 @@ import math
 import os
 import re
 import shlex
+import socket
 import statistics
 import sys
 import time
@@ -338,9 +339,12 @@ USAGE_FIELDS = ("date",       # when it ended, local time, YYYY-MM-DDTHH:MM
                 "stall_s",    # time its tasks stalled for lack of memory (memory.pressure "some")
                 "provider",   # hetzner (the shared server) or runpod (a GPU pod; then type is the GPU id)
                 "billed_s",   # runpod: how long the pod existed (n/a for hetzner: billed per server hour)
-                "cost_usd")   # runpod: estimated cost of the pod, USD/h x billed_s (n/a for hetzner)
+                "cost_usd",   # runpod: estimated cost of the pod, USD/h x billed_s (n/a for hetzner)
+                "gpu_use",    # runpod: the watcher's summary, "GPU_USE mean=… · VRAM max=… · CPU mean=… · RAM max=…"
+                "phases")     # runpod: how long each phase of the run took, "PHASES budget=2 … delete=1" (seconds)
 NUMERIC = ("seconds", "peak_mb", "ram_mb", "cpu_s", "vcpus", "exit", "stall_s", "billed_s")
 OLD_FIELDS = 12   # lines written before GPU pods existed: hetzner, nothing billed per line
+POD_FIELDS = 15   # lines written before the GPU watcher and phase timings (spec 0005)
 
 
 def usage_line_ok(u):
@@ -353,6 +357,8 @@ def parse_usage(line):
     parts = line.split("\t")
     if len(parts) == OLD_FIELDS:
         parts += ["hetzner", "n/a", "n/a"]
+    if len(parts) == POD_FIELDS:
+        parts += ["n/a", "n/a"]
     if len(parts) != len(USAGE_FIELDS):
         return None
     u = dict(zip(USAGE_FIELDS, parts))
@@ -404,7 +410,7 @@ def usage_add(args):
         end = int(m["end"])
         out.append([datetime.fromtimestamp(end).strftime("%Y-%m-%dT%H:%M"), project, target, job,
                     m.get("type") or "unknown", str(end - int(m["start"]))] + measured_fields(m)
-                   + ["hetzner", "n/a", "n/a"])
+                   + ["hetzner", "n/a", "n/a", "n/a", "n/a"])
     append_usage(path, keep, out)
 
 
@@ -440,12 +446,19 @@ def append_usage(path, keep, out):
 
 
 def usage_report(args):
-    """usage <usage.tsv> <keep_days> [project] [target]: per project and job, runs, highest peak RAM, RAM wait,
-    cores used, longest run, GPU cost and time, server types or GPUs; then the GPU spend."""
+    """usage <usage.tsv> <keep_days> [project] [target] [--month] [--phases]: per project and job, runs, highest
+    peak RAM, RAM wait, cores used, longest run, GPU cost and time, server types or GPUs; then the GPU spend.
+    --month: this calendar month's GPU spend by project. --phases: each GPU run's phase timings and GPU use."""
     path, keep = args[0], float(args[1])
-    project, target = (args[2:3] or [""])[0], (args[3:4] or [""])[0]
+    flags = {a for a in args[2:] if a.startswith("--")}
+    pos = [a for a in args[2:] if not a.startswith("--")]
+    project, target = (pos[0:1] or [""])[0], (pos[1:2] or [""])[0]
     rows = [u for u in read_usage(path, keep)
             if (not project or u["project"] == project) and (not target or u["target"] == target)]
+    if "--month" in flags:
+        return month_report(of_month([u for u in rows if is_pod(u)]))
+    if "--phases" in flags:
+        return phases_report([u for u in rows if is_pod(u)])
     if not rows:
         print(f"No job usage recorded yet{' for ' + project if project else ''} (last {keep:g} days). Every remote "
               f"job records one line when it ends.")
@@ -471,9 +484,39 @@ def usage_report(args):
     print("of memory: near 0 s means the RAM was enough. Jobs that run at the same time on the shared server add up.")
     pods = [u for u in rows if is_pod(u)]
     if pods:
-        print(f"GPU pods (RunPod): {gpu_spend(pods)} in these {keep:g} days, {gpu_spend(of_today(pods), none="0.00 USD / 0 min")} today. "
-              f"GPU COST is cloudmule's estimate (USD/h x minutes")
-        print("the pod existed); RunPod's billing is authoritative.")
+        print(f"GPU pods (RunPod): {gpu_spend(pods)} in these {keep:g} days, "
+              f"{gpu_spend(of_month(pods), none='0.00 USD / 0 min')} this month, "
+              f"{gpu_spend(of_today(pods), none='0.00 USD / 0 min')} today.")
+        print("GPU COST is cloudmule's estimate (USD/h x minutes the pod existed); RunPod's billing is authoritative.")
+        print("By project this month: cloudmule usage --month. Phase timings and GPU use: cloudmule usage --phases.")
+
+
+def month_report(pods):
+    """This calendar month's GPU spend, by project."""
+    month = datetime.now().strftime("%Y-%m")
+    if not pods:
+        print(f"No GPU pods recorded in {month}.")
+        return
+    by = {}
+    for u in pods:
+        by.setdefault(u["project"], []).append(u)
+    print(f"GPU pods in {month} (RunPod; cloudmule's estimate, RunPod's billing is authoritative):")
+    print(f"{'PROJECT':<16}{'PODS':>5}  GPU COST")
+    for p, us in sorted(by.items()):
+        print(f"{p:<16}{len(us):>5}  {gpu_spend(us)}")
+    print(f"{'total':<16}{len(pods):>5}  {gpu_spend(pods)}")
+
+
+def phases_report(pods):
+    """Each GPU run: when, project, job, GPU, cost, its phase timings (seconds) and its GPU use."""
+    if not pods:
+        print("No GPU pods recorded yet.")
+        return
+    for u in pods:
+        cost = "n/a" if u["cost_usd"] == "n/a" else f"{float(u['cost_usd']):.3f} USD"
+        print(f"{u['date']}  {u['project']} {u['job']}  {u['type']}  {cost}")
+        print(f"  {u['phases'] if u['phases'] != 'n/a' else 'PHASES n/a'}")
+        print(f"  {u['gpu_use'] if u['gpu_use'] != 'n/a' else 'GPU_USE n/a'}")
 
 
 def gpu_spend(us, none="-"):
@@ -562,6 +605,19 @@ def rp_message(raw):
     return str(j)[:300]
 
 
+_getaddrinfo = socket.getaddrinfo
+
+
+def _ipv4_first(*args, **kwargs):
+    """getaddrinfo with IPv4 addresses first. urllib tries the addresses in order, one connect timeout each; on a
+    network whose IPv6 does not answer, api.runpod.io's two IPv6 addresses cost ~21 s each before IPv4 (measured
+    2026-11-19: every RunPod call took 42 s). An IPv6-only network fails the IPv4 attempt at once and goes on."""
+    return sorted(_getaddrinfo(*args, **kwargs), key=lambda a: a[0] != socket.AF_INET)
+
+
+socket.getaddrinfo = _ipv4_first
+
+
 def rp(method, path, body=None):
     key = os.environ.get("RUNPOD_API_KEY", "").strip()
     if not key:
@@ -598,9 +654,53 @@ def rp_list(data):
     return []
 
 
-def rp_catalog(cloud):
+CATALOG_TTL = 600   # seconds a cached catalog (logs/runpod-catalog.json) is good for, to read prices
+
+
+def rp_catalog_cached(cloud, cache):
+    """(the cloud's catalog, whether it came from the cache): from the cache when it is younger than CATALOG_TTL, else
+    from the API (then cached)."""
+    data = {}
+    if cache and os.path.exists(cache):
+        try:
+            with open(cache, encoding="utf-8") as f:
+                data = json.load(f)
+            entry = data.get(cloud) or {}
+            if time.time() - float(entry.get("time") or 0) < CATALOG_TTL and entry.get("gpus"):
+                return entry["gpus"], True
+        except (OSError, ValueError, TypeError, AttributeError):
+            data = {}
+    return rp_catalog(cloud, cache), False
+
+
+def write_catalog_cache(cache, cloud, gpus):
+    if not cache:
+        return
     try:
-        return rp_list(rp("GET", f"/catalog/gpus?include=AVAILABILITY&product=POD&cloud={cloud}"))
+        with open(cache, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    data[cloud] = {"time": time.time(), "gpus": gpus}
+    tmp = f"{cache}.{os.getpid()}.tmp"
+    try:   # best effort: another session may be reading it (Windows refuses to replace an open file)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, cache)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def rp_catalog(cloud, cache=None):
+    try:
+        gpus = rp_list(rp("GET", f"/catalog/gpus?include=AVAILABILITY&product=POD&cloud={cloud}"))
+        write_catalog_cache(cache, cloud, gpus)
+        return gpus
     except RunPodError as e:
         if e.status != 403:
             raise
@@ -641,6 +741,8 @@ class GpuLimits:
         self.max_usd = float(o["max-usd"])
         self.minutes = float(o["max-minutes"])
         self.day_left = float(o["day-left"])
+        # what the monthly cap still allows (RUNPOD_MAX_USD_PER_MONTH); None = no monthly cap
+        self.month_left = float(o["month-left"]) if str(o.get("month-left") or "") not in ("", "none") else None
 
     def worst(self, usd_h):
         """The most one pod can cost: it is deleted after max-minutes whatever happens."""
@@ -664,6 +766,9 @@ def gpu_eval(g, cloud, price, lim):
         why.append(("hourly", f"above the hourly cap {usd(lim.max_usd)} USD/h"))
     elif lim.worst(price) > lim.day_left:
         why.append(("daily", f"worst case {usd(lim.worst(price))} USD passes today's cap ({usd(max(lim.day_left, 0))} left)"))
+    elif lim.month_left is not None and lim.worst(price) > lim.month_left:
+        why.append(("monthly", f"worst case {usd(lim.worst(price))} USD passes this month's cap "
+                               f"({usd(max(lim.month_left, 0))} left)"))
     avail = gpu_avail(g, cloud)
     if avail == "NONE":
         why.append(("unavailable", "none available now"))
@@ -671,24 +776,33 @@ def gpu_eval(g, cloud, price, lim):
 
 
 def gpus_menu(o):
+    """The GPU menu: the fitting offers (every offer with --all), with the CPUs and RAM a pod of that GPU gets
+    (catalog: minVcpuCount, minRam), then RECOMMENDED. Writes the catalog cache (--cache) for `gpu`."""
     lim = GpuLimits(o)
     rows = []
     for cloud in str(o.get("clouds") or "SECURE").split():
-        for g in rp_catalog(cloud):
+        for g in rp_catalog(cloud, o.get("cache")):
             price = gpu_price(g, cloud)
             if price is not None and g.get("id"):
-                rows.append(gpu_eval(g, cloud, price, lim))
+                e = gpu_eval(g, cloud, price, lim)
+                e["vcpu"], e["ram"] = g.get("minVcpuCount"), g.get("minRam")
+                rows.append(e)
     rows.sort(key=lambda e: (bool(e["why"]), any(k == "unavailable" for k, _ in e["why"]), e["usd"], e["id"]))
-    w = max([len(e["id"]) for e in rows] + [3])
-    print(f"{'GPU':<{w}}  {'VRAM':>6}  {'CLOUD':<10}{'USD/H':>6}  {'MAX/POD':>7}  {'AVAIL':<7} VERDICT")
-    for e in rows:
+    fit = [e for e in rows if not e["why"]]
+    shown = rows if o.get("all") else fit
+    w = max([len(e["id"]) for e in shown] + [3])
+    print(f"{'GPU':<{w}}  {'VRAM':>6}  {'VCPU':>4}  {'RAM':>6}  {'CLOUD':<10}{'USD/H':>6}  {'MAX/POD':>7}  {'AVAIL':<7} VERDICT")
+    for e in shown:
         last = " (last choice)" if (e["id"], e["cloud"]) == (o.get("last-gpu"), o.get("last-cloud")) else ""
         verdict = "no: " + texts(e["why"]) if e["why"] else "fits" + last
-        print(f"{e['id']:<{w}}  {gb(e['vram']) + ' GB':>6}  {e['cloud']:<10}{usd(e['usd']):>6}  "
+        vcpu = str(e["vcpu"]) if e["vcpu"] else "?"
+        ram = f"{e['ram']} GB" if e["ram"] else "?"
+        print(f"{e['id']:<{w}}  {gb(e['vram']) + ' GB':>6}  {vcpu:>4}  {ram:>6}  {e['cloud']:<10}{usd(e['usd']):>6}  "
               f"{usd(lim.worst(e['usd'])):>7}  {e['avail']:<7} {verdict}")
-    print(f"MAX/POD = USD/H x {gb(lim.minutes)} min (RUNPOD_MAX_MINUTES): the most one pod can cost.")
-    fit = [e for e in rows if not e["why"]]
-    print(f"{len(fit)} of {len(rows)} GPU offers fit right now.")
+    print(f"MAX/POD = USD/H x {gb(lim.minutes)} min (RUNPOD_MAX_MINUTES): the most one pod can cost. VCPU/RAM: what "
+          f"RunPod's catalog says a pod of that GPU gets; its real allotment (POD_CPUS, printed by every run) can be lower.")
+    print(f"{len(fit)} of {len(rows)} GPU offers fit right now."
+          + ("" if o.get("all") or len(rows) == len(fit) else f" The other {len(rows) - len(fit)}, and why: --all."))
     rec = [e for e in fit if e["avail"] in RP_GOOD] or fit
     if rec:
         print(f"RECOMMENDED: {rec[0]['id']} {rec[0]['cloud']} {usd(rec[0]['usd'])}")
@@ -721,21 +835,28 @@ def write_record(records, rec):
     os.replace(tmp, record_path(records, rec["id"]))
 
 
-def pod_usage_line(rec, billed_s, measure_file=""):
-    """The usage line of a deleted pod: the job's measurement (if it ran) and what the pod cost."""
-    m = {}
+def pod_usage_line(rec, billed_s, measure_file="", delete_s=None):
+    """The usage line of a deleted pod: the job's measurement (if it ran), what the pod cost, and the run's GPU_USE
+    and PHASES lines (written to the measure file by `gpu`)."""
+    m, extra = {}, {"GPU_USE": "n/a", "PHASES": "n/a"}
     if measure_file and os.path.exists(measure_file):
         with open(measure_file, encoding="utf-8") as f:
             for raw in f.read().splitlines():
                 m = measurement(raw) or m
+                head, _, rest = raw.partition(" ")
+                if head in extra and rest.strip():
+                    extra[head] = raw.strip().replace("\t", " ")   # the whole line: "GPU_USE mean=…", "PHASES …"
     seconds = str(int(m["end"]) - int(m["start"])) if m else str(billed_s)
     return ([datetime.now().strftime("%Y-%m-%dT%H:%M"), rec.get("project") or "-", rec.get("target") or "-",
              rec.get("job") or "-", rec.get("gpu") or "unknown", seconds] + measured_fields(m)
-            + ["runpod", str(billed_s), f"{float(rec.get('cost') or 0) * billed_s / 3600:.4f}"])
+            + ["runpod", str(billed_s), f"{float(rec.get('cost') or 0) * billed_s / 3600:.4f}",
+               extra["GPU_USE"], extra["PHASES"] + (f" delete={delete_s}" if extra["PHASES"] != "n/a"
+                                                    and delete_s is not None else "")])
 
 
 def pod_delete(rec, o, measure_file="", billed_s=None):
     """Deletes a recorded pod (retrying: a pod left behind bills), records its usage line, forgets its record."""
+    t0 = time.time()
     for attempt in range(3):
         try:
             rp("DELETE", f"/pods/{rec['id']}")
@@ -749,7 +870,8 @@ def pod_delete(rec, o, measure_file="", billed_s=None):
             time.sleep(5)
     if billed_s is None:
         billed_s = max(0, int(time.time() - float(rec.get("created") or time.time())))
-    append_usage(o["usage"], float(o.get("keep-days") or 90), [pod_usage_line(rec, billed_s, measure_file)])
+    append_usage(o["usage"], float(o.get("keep-days") or 90),
+                 [pod_usage_line(rec, billed_s, measure_file, int(time.time() - t0 + 0.5))])
     try:
         os.remove(record_path(o["records"], rec["id"]))
     except OSError:
@@ -763,10 +885,20 @@ def rp_launch(o):
     if lim.day_left <= 0:
         fail_launch("DAILY_CAP_REACHED", ["today's GPU spend (with the pods running now) has reached "
                                           "RUNPOD_MAX_USD_PER_DAY"])
+    if lim.month_left is not None and lim.month_left <= 0:
+        fail_launch("MONTHLY_CAP_REACHED", ["this month's GPU spend (with the pods running now) has reached "
+                                            "RUNPOD_MAX_USD_PER_MONTH"])
     gids = [c.strip() for c in str(o.get("candidates") or "").split(",") if c.strip()]
     if not gids:
         fail_launch("NEEDS_GPU_CHOICE", ["no GPU id given (see: cloudmule gpus)"])
-    catalog = {str(g.get("id")): g for g in rp_catalog(cloud)}
+    # the catalog only gives the price for the caps: a cached one (CATALOG_TTL) is enough, and its availability is
+    # not trusted: a named GPU is simply tried (RunPod answers 400 at once when none is free)
+    t_cat = time.time()
+    cached, from_cache = rp_catalog_cached(cloud, o.get("cache"))
+    catalog = {str(g.get("id")): g for g in cached}
+    if from_cache and any(gid not in catalog or gpu_price(catalog[gid], cloud) is None for gid in gids):
+        catalog = {str(g.get("id")): g for g in rp_catalog(cloud, o.get("cache"))}   # the cache may be behind
+    cat_s = int(time.time() - t_cat + 0.5)
     kinds, why = [], []
     for gid in gids:
         g = catalog.get(gid)
@@ -776,6 +908,7 @@ def rp_launch(o):
             why.append(f"{gid}: not offered in RunPod's {cloud} catalog (see: cloudmule gpus)")
             continue
         e = gpu_eval(g, cloud, price, lim)
+        e["why"] = [w for w in e["why"] if w[0] != "unavailable"]
         if e["why"]:
             kinds.append(e["why"][0][0])
             why.append(f"{gid}: {texts(e['why'])}")
@@ -795,6 +928,7 @@ def rp_launch(o):
         progress(f"Creating a GPU pod: {gid}, {cloud}, about {usd(price)} USD/h…")
         new = {"name": o["name"], "gpu": gid, "cloud": cloud, "run": o["run"], "project": o.get("project") or "-",
                "target": o.get("target") or "-", "job": o.get("job") or "-"}
+        t_post = time.time()
         try:
             pod = rp("POST", "/pods", body)
         except RunPodError as err:
@@ -815,17 +949,23 @@ def rp_launch(o):
             over = ("hourly", f"above the hourly cap {usd(lim.max_usd)} USD/h")
         elif lim.worst(cost) > lim.day_left:   # the catalog price passed, the real one may not
             over = ("daily", f"worst case {usd(lim.worst(cost))} USD passes today's cap")
+        elif lim.month_left is not None and lim.worst(cost) > lim.month_left:
+            over = ("monthly", f"worst case {usd(lim.worst(cost))} USD passes this month's cap")
         if over:
             progress(f"  {gid}: RunPod charges {usd(cost)} USD/h, {over[1]}: deleting it at once.")
             pod_delete(rec, o)
             kinds.append(over[0])
             why.append(f"{gid}: created at {usd(cost)} USD/h, {over[1]}: deleted")
             continue
-        print(f"POD\t{rec['id']}\t{usd(cost)}\t{gid}")
+        # the catalog's CPUs and RAM for this GPU: the jobs' fallback when the pod's cgroup shows no limit
+        # "-" for a value the catalog lacks: bash's `read` would merge empty tab-separated fields
+        print(f"POD\t{rec['id']}\t{usd(cost)}\t{gid}\t{g.get('minVcpuCount') or '-'}\t{g.get('minRam') or '-'}"
+              f"\t{cat_s}\t{int(time.time() - t_post + 0.5)}")
         return
     # one code for the whole refusal: the shared reason when every candidate had the same one; otherwise
     # NO_FITTING_GPU if some candidate can never fit (VRAM, vendor, cloud, unknown id), else NO_GPU_AVAILABLE
-    single = {"hourly": "ABOVE_HOURLY_CAP", "daily": "DAILY_CAP_REACHED", "unavailable": "NO_GPU_AVAILABLE"}
+    single = {"hourly": "ABOVE_HOURLY_CAP", "daily": "DAILY_CAP_REACHED", "monthly": "MONTHLY_CAP_REACHED",
+              "unavailable": "NO_GPU_AVAILABLE"}
     if len(set(kinds)) == 1 and kinds[0] in single:
         code = single[kinds[0]]
     elif set(kinds) - set(single):
@@ -944,7 +1084,7 @@ def rp_pods(o):
     own = float(o["max-minutes"])
     recs = {r["id"]: r for r in read_records(o["records"])}
     pods = rp_list(rp("GET", "/pods"))
-    seen, lines, worst, failed = set(), [], 0.0, []
+    seen, lines, worst, failed, running = set(), [], 0.0, [], []
     for p in pods:
         pid, name = str(p.get("id") or ""), str(p.get("name") or "")
         seen.add(pid)
@@ -978,6 +1118,11 @@ def rp_pods(o):
         if mine:
             worst += cost * cap / 60
             lines.append(f"  {name} ({pid}): {pod_gpu(p, rec)}, {usd(cost)} USD/h, {up}")
+            if str(p.get("desiredStatus") or p.get("status") or "").upper() != "TERMINATED":   # a stopped pod still bills
+                tag = name.rsplit("-", 1)[-1]
+                here = f" (this computer: {rec.get('project')} {rec.get('job')})" if rec and rec.get("run") else ""
+                running.append(f"  {name} ({pid}): {pod_gpu(p, rec)}, {up}"
+                               f"{', run tag ' + tag if re.fullmatch(r'[0-9a-f]{6}', tag) else ''}{here}")
         else:
             lines.append(f"  WARNING: {name or '(no name)'} ({pid}) is not cloudmule's: {pod_gpu(p, rec)}, "
                          f"{usd(cost)} USD/h, {up}. It bills too (RunPod console -> Pods).")
@@ -988,6 +1133,9 @@ def rp_pods(o):
             pod_delete(rec, o, billed_s=int(min(time.time() - float(rec.get("created") or 0), cap * 60)))
     if o.get("worst"):
         print(f"RUNNING_WORST_USD {worst:.4f}")
+        print(f"RUNNING_PODS {len(running)}")   # cloudmule's pods running now, any project, session or computer
+        for line in running:
+            print("RUNNING_POD" + line)
     else:
         print("\n".join(lines) if lines else "  none")
     if failed:
@@ -1004,11 +1152,138 @@ def of_today(rows):
     return [u for u in rows if u["date"].startswith(today)]
 
 
-def rp_spend(path):
-    """Today's GPU spend in USD, from the usage lines of deleted pods."""
-    total = sum(float(u["cost_usd"]) for u in of_today(read_usage(path, 3650, prune=False))
+def of_month(rows):
+    month = datetime.now().strftime("%Y-%m")
+    return [u for u in rows if u["date"].startswith(month)]
+
+
+def rp_spend(path, month=False):
+    """Today's (or this calendar month's) GPU spend in USD, from the usage lines of deleted pods."""
+    rows = read_usage(path, 3650, prune=False)
+    total = sum(float(u["cost_usd"]) for u in (of_month(rows) if month else of_today(rows))
                 if is_pod(u) and u["cost_usd"] != "n/a")
     print(f"{total:.4f}")
+
+
+# ---------------------------------------------------------------- the GPU watcher's log (remote/gpu-watch.sh)
+def watch_samples(lines):
+    """The watcher's sample lines (key=value: t gpu vram vram_total cpu_usec cpus ram ram_total) as dicts of
+    numbers (missing values left out), and its DEGRADED lines as (epoch, pattern)."""
+    samples, degraded = [], []
+    for raw in lines:
+        if raw.startswith("DEGRADED "):
+            m = re.match(r"DEGRADED t=(\d+) pattern=(.*)", raw.strip())
+            if m:
+                degraded.append((int(m.group(1)), m.group(2)))
+            continue
+        kv = dict(x.split("=", 1) for x in raw.split() if "=" in x)
+        s = {}
+        for k, v in kv.items():
+            try:
+                s[k] = float(v)
+            except ValueError:
+                pass
+        if "t" in s:
+            samples.append(s)
+    return samples, degraded
+
+
+def watch_numbers(samples, cpus=None, ram_gb=None):
+    """GPU mean/max %, VRAM max/total MiB, CPU mean % of the pod's allotment, RAM max/total GiB, seconds covered."""
+    gpu = [s["gpu"] for s in samples if "gpu" in s]
+    n = {"seconds": samples[-1]["t"] - samples[0]["t"] if len(samples) > 1 else 0.0,
+         "gpu_mean": statistics.mean(gpu) if gpu else None, "gpu_max": max(gpu) if gpu else None,
+         "vram_max": max((s["vram"] for s in samples if "vram" in s), default=None),
+         "vram_total": max((s["vram_total"] for s in samples if "vram_total" in s), default=None),
+         "ram_max": max((s["ram"] for s in samples if "ram" in s), default=None),
+         "ram_total": max((s["ram_total"] for s in samples if "ram_total" in s), default=None),
+         "cpus": next((s["cpus"] for s in reversed(samples) if s.get("cpus")), None) or cpus, "cpu_mean": None}
+    if n["ram_total"] is None and ram_gb:
+        n["ram_total"] = ram_gb * 1024
+    cu = [s for s in samples if "cpu_usec" in s]
+    # CPU % against the pod's own allotment (its cgroup quota, or the catalog's vCPUs), never the host's threads
+    if len(cu) > 1 and n["cpus"] and cu[-1]["t"] > cu[0]["t"]:
+        n["cpu_mean"] = (cu[-1]["cpu_usec"] - cu[0]["cpu_usec"]) / 1e6 / (cu[-1]["t"] - cu[0]["t"]) / n["cpus"] * 100
+    return n
+
+
+def pct(x):
+    return "n/a" if x is None else f"{x:.0f}%"
+
+
+def gpu_use_line(n):
+    vram = "n/a" if n["vram_max"] is None else f"{n['vram_max']:.0f}/{n['vram_total'] or 0:.0f} MiB"
+    cpu = pct(n["cpu_mean"]) + (f" of {n['cpus']:g} vCPUs" if n["cpus"] else "")
+    ram = "n/a" if n["ram_max"] is None else (f"{n['ram_max'] / 1024:.1f}/"
+                                              f"{(n['ram_total'] or 0) / 1024:.0f} GiB")
+    return f"GPU_USE mean={pct(n['gpu_mean'])} max={pct(n['gpu_max'])} · VRAM max={vram} · CPU mean={cpu} · RAM max={ram}"
+
+
+def slots_hint(n):
+    """The skill's decision rule (docs/specs/0005), applied to one run's numbers."""
+    g, c = n["gpu_mean"], n["cpu_mean"]
+    vram = n["vram_max"] / n["vram_total"] * 100 if n["vram_max"] is not None and n["vram_total"] else None
+    ram = n["ram_max"] / n["ram_total"] * 100 if n["ram_max"] is not None and n["ram_total"] else None
+    if g is None:
+        return "no GPU numbers: nothing to decide from"
+    if ram is not None and ram >= 80:
+        return f"RAM is near the pod's limit ({ram:.0f}%): fewer parallel tasks (slots)"
+    if g >= 85 or (vram is not None and vram >= 80):
+        return ("the GPU is full: keep or lower the slots; a stronger GPU or more pods are the options (compare the "
+                "price per unit of work)")
+    if c is not None and c >= 85:
+        return ("the CPU is the limit (the pod's allotment), not the GPU: keep the slots; a GPU type with more vCPUs "
+                "(cloudmule gpus, vCPU column) or less CPU work per task would help, a stronger GPU would not")
+    if all(x is None or x < 60 for x in (g, c, vram, ram)):
+        return "every resource below 60%: room for more parallel tasks (raise the slots x2, up to the number of tasks)"
+    return "no resource is saturated: keep the slots, or raise them by one and compare the throughput"
+
+
+def gpu_summary(path, o):
+    """gpu-summary <watch log|-> [--needs graphics|cuda] [--cpus N] [--ram-gb N] [--last]: the run's GPU_USE line,
+    a hint from the slots rule, and (graphics) GPU_DEGRADED lines. --last: only the last 6 samples, as one NOW line."""
+    with (sys.stdin if path == "-" else open(path, encoding="utf-8", errors="replace")) as f:
+        samples, degraded = watch_samples(f.read().splitlines())
+    cpus, ram_gb = float(o.get("cpus") or 0) or None, float(o.get("ram-gb") or 0) or None
+    if o.get("last"):
+        if not samples:
+            print("NOW no GPU numbers yet (the watcher starts with the job)")
+            return
+        n = watch_numbers(samples[-6:], cpus, ram_gb)
+        vram = "n/a" if n["vram_max"] is None else f"{n['vram_max']:.0f}/{n['vram_total'] or 0:.0f} MiB"
+        ram = "n/a" if n["ram_max"] is None else f"{n['ram_max'] / 1024:.1f}/{(n['ram_total'] or 0) / 1024:.0f} GiB"
+        cpu = pct(n["cpu_mean"]) + (f" of {n['cpus']:g} vCPUs" if n["cpus"] else "")
+        print(f"NOW GPU {pct(n['gpu_mean'])} · VRAM {vram} · CPU {cpu} · RAM {ram} (last {n['seconds']:.0f} s)")
+        return
+    if not samples:
+        print("GPU_USE n/a (the watcher recorded nothing)")
+        return
+    n = watch_numbers(samples, cpus, ram_gb)
+    print(gpu_use_line(n))
+    print("GPU_USE_HINT: " + slots_hint(n))
+    if o.get("needs") == "graphics":
+        for t, p in degraded[:1]:
+            print(f"GPU_DEGRADED: {p} at {datetime.fromtimestamp(t).strftime('%H:%M:%S')} (in Chrome's log, "
+                  f"CLOUDMULE_CHROME_LOG)")
+        if n["gpu_mean"] is not None and n["gpu_mean"] < 5 and n["seconds"] > 60:
+            print(f"GPU_DEGRADED: GPU idle (mean {n['gpu_mean']:.1f}% over {n['seconds']:.0f} s: Chrome may have "
+                  f"left the GPU)")
+
+
+def rp_find(o):
+    """rp-find --records <dir> --keys <dir> [--who <run tag|run|pod id>]: this computer's newest pod (or the one
+    named) whose throwaway key is still here: "id<TAB>run<TAB>project<TAB>target<TAB>job"."""
+    who = str(o.get("who") or "")
+    recs = [r for r in read_records(o["records"]) if r.get("run")
+            and os.path.exists(os.path.join(o["keys"], f"pod-{r['run']}.addr"))]
+    if who:
+        recs = [r for r in recs if who in (r.get("id"), r.get("run"), r["run"].rsplit("-", 1)[-1])]
+    if not recs:
+        sys.stderr.write("NO_RUNNING_POD: no running GPU pod of this computer" + (f" matches '{who}'" if who else "")
+                         + " (only pods created here can be watched: their SSH key stays on this computer)\n")
+        sys.exit(3)
+    r = max(recs, key=lambda r: float(r.get("created") or 0))
+    print("\t".join(str(r.get(k) or "-") for k in ("id", "run", "project", "target", "job")))
 
 
 def runpod_main(cmd, args):
@@ -1040,7 +1315,11 @@ def main():
     sys.stdin.reconfigure(encoding="utf-8")
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd == "rp-spend":
-        return rp_spend(args[0])
+        return rp_spend(args[0], "--month" in args)
+    if cmd == "rp-find":
+        return rp_find(opts(args))
+    if cmd == "gpu-summary":
+        return gpu_summary(args[0], opts(args[1:]))
     if cmd.startswith("rp-"):
         return runpod_main(cmd, args)
     if cmd == "sync-plan":

@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # Fake ssh for the GPU pod tests: it never connects anywhere. Logs every remote command to $FAKE_SSH_LOG and answers
 # the commands cloudmule sends to a pod as a fresh pod would: every module missing, every job ending at once.
-#   FAKE_SSH_DOWN=1         every connection fails (the pod never answers SSH)
-#   FAKE_SSH_FAIL=<job>     that job (its log name ends in -<job>.log) exits 1
-#   FAKE_SSH_WEBGL=software cloudmule-webgl-check finds Chrome rendering in software
+#   FAKE_SSH_DOWN=1          every connection fails (the pod never answers SSH)
+#   FAKE_SSH_FAIL=<job>      that job (its log name ends in -<job>.log) exits 1 (after announcing its result)
+#   FAKE_SSH_SLOW=<job>      that job keeps running until cloudmule stops it (kill -TERM), then exits 143
+#   FAKE_SSH_NEAR=<job>      that job ends 1 s before its CLOUDMULE_DEADLINE (near the pod's time cap)
+#   FAKE_SSH_WEBGL=software  cloudmule-webgl-check finds Chrome rendering in software (exit 3)
+#   FAKE_SSH_WEBGL=lost      cloudmule-webgl-check sees the WebGL context lost (exit 4)
+#   FAKE_SSH_WEBGL=post-lost only the check after the job (--quick) sees it lost
+#   FAKE_SSH_ALLOC=none      the pod's cgroup shows no CPU quota or memory limit (else 9 vCPUs, 50 GB)
+#   FAKE_SSH_WATCH=<file>    the watcher's log the pod returns (else two samples: GPU 20-40 %, CPU 50 % of 9)
+#   FAKE_SSH_STATE=<dir>     where the fake keeps what it was told (a stopped job)
 set -u
 cmd=""; next=0
 for a in "$@"; do
@@ -12,18 +19,52 @@ for a in "$@"; do
 done
 printf '%s\n' "$cmd" >> "${FAKE_SSH_LOG:-/dev/null}"
 [ "${FAKE_SSH_DOWN:-}" = 1 ] && { echo "ssh: connect to host: Connection refused" >&2; exit 255; }
-exit_of() { case "$1" in *"-${FAKE_SSH_FAIL:-no-such-job}.log"*) echo 1 ;; *) echo 0 ;; esac; }
+STATE="${FAKE_SSH_STATE:-${TMPDIR:-/tmp}}"
+exit_of() {
+  case "$1" in
+    *"-${FAKE_SSH_FAIL:-no-such-job}.log"*) echo 1 ;;
+    *"-${FAKE_SSH_SLOW:-no-such-job}.log"*) if [ -e "$STATE/fake-ssh-stopped" ]; then echo 143; else echo running; fi ;;
+    *"-${FAKE_SSH_NEAR:-no-such-job}.log"*)
+      d="$(cat "$STATE/fake-ssh-deadline" 2>/dev/null || echo 0)"
+      if [ "$(date +%s)" -ge $(( d - 1 )) ]; then echo 0; else echo running; fi ;;
+    *) echo 0 ;;
+  esac
+}
+case "$cmd" in *CLOUDMULE_DEADLINE=[0-9]*)   # a job launch: remember its deadline
+  printf '%s\n' "$cmd" | sed -n 's/.*CLOUDMULE_DEADLINE=\([0-9][0-9]*\).*/\1/p' | head -1 > "$STATE/fake-ssh-deadline" ;; esac
 case "$cmd" in
-  cloudmule-webgl-check)         # FAKE_SSH_WEBGL=software: Chrome fell back to software rendering
-    if [ "${FAKE_SSH_WEBGL:-}" = software ]; then echo "WebGL renderer: SwiftShader"; exit 1; fi
-    echo "WebGL renderer: ANGLE (NVIDIA, Vulkan 1.3 (NVIDIA A40))" ;;
+  cloudmule-webgl-check*)
+    case "${FAKE_SSH_WEBGL:-}" in
+      software) echo "WebGL renderer: SwiftShader"; echo "WEBGL_CHECK_FAIL: GPU_NOT_USED: software"; exit 3 ;;
+      lost) echo "CHECK renderer_before=ANGLE (NVIDIA A40) lost=1 texel_ok=0"; echo "WEBGL_CHECK_FAIL: GPU_CONTEXT_LOST: lost"; exit 4 ;;
+      post-lost) case "$cmd" in *--quick*) echo "WEBGL_CHECK_FAIL: GPU_CONTEXT_LOST: lost"; exit 4 ;; esac ;;
+    esac
+    echo "WebGL renderer: ANGLE (NVIDIA Corporation, NVIDIA A40/PCIe/SSE2, OpenGL ES 3.2)"
+    echo "CHECK renderer_before=ANGLE (NVIDIA Corporation, NVIDIA A40/PCIe/SSE2, OpenGL ES 3.2) lost=0 texel_ok=1 frames=900"
+    echo "WEBGL_CHECK_OK" ;;
+  *"gpu-watch.sh alloc"*)
+    if [ "${FAKE_SSH_ALLOC:-}" = none ]; then echo "POD_CPUS= POD_RAM_GB="; else echo "POD_CPUS=9 POD_RAM_GB=50"; fi ;;
+  *"gpu-watch.sh tail "*|*"gpu-watch.sh follow "*)
+    echo "rendering frame 120/1128"
+    echo "WATCH t=1000 gpu=20 vram=4000 vram_total=46068 cpu_usec=0 cpus=9 ram=10240 ram_total=51200"
+    echo "WATCH t=1010 gpu=30 vram=4100 vram_total=46068 cpu_usec=72000000 cpus=9 ram=10300 ram_total=51200"
+    echo "WATCH_END" ;;
+  "cat /root/cloudmule/gpu-watch.log")
+    if [ -n "${FAKE_SSH_WATCH:-}" ]; then cat "$FAKE_SSH_WATCH"
+    else
+      echo "t=1000 gpu=20 vram=4000 vram_total=46068 cpu_usec=0 cpus=9 ram=10240 ram_total=51200"
+      echo "t=1100 gpu=40 vram=5000 vram_total=46068 cpu_usec=450000000 cpus=9 ram=12288 ram_total=51200"
+    fi ;;
+  *"kill -TERM"*)                : > "$STATE/fake-ssh-stopped" ;;
   *"; do test -f "*)             # ensure_modules: which modules are missing (all of them on a new pod)
     mods="${cmd#*for s in }"; mods="${mods%%; do*}"; for m in $mods; do printf ' %s' "$m"; done ;;
-  *"tail -c 4000 "*)             echo "EXIT $(exit_of "$cmd")" ;;
+  *"tail -c 4000 "*)
+    e="$(exit_of "$cmd")"; if [ "$e" = running ]; then echo "working"; else echo "EXIT $e"; fi ;;
   "cat /root/cloudmule/jobs/"*)  echo "working"
                                  case "$cmd" in *-module-*|*-install.log|*/module-*) ;;
-                                   *) [ "$(exit_of "$cmd")" = 0 ] && echo "CLOUDMULE_RESULT out/frame.png" ;; esac
-                                 echo "EXIT $(exit_of "$cmd")" ;;
+                                   *) echo "CLOUDMULE_RESULT out/frame.png" ;; esac
+                                 e="$(exit_of "$cmd")"; [ "$e" = running ] && e=143
+                                 echo "EXIT $e" ;;
   *".usage.prev "*)              echo "start=1000 end=1090 exit=0 peak_bytes=2147483648 cpu_usec=45000000 stall_usec=0 type= vcpus=16 mem_kb=65000000" ;;
   *"cat > "*|*"tar "*"xf"*|*"xargs "*) cat > /dev/null ;;   # uploads: swallow what is sent
 esac

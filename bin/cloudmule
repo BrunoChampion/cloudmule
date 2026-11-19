@@ -35,23 +35,29 @@
 #   cloudmule leases                                who is using the server (and for how long, running jobs)
 #   cloudmule status                                what exists and therefore bills: server, leases, snapshots,
 #                                                   RunPod GPU pods (deletes cloudmule's orphan pods)
-#   cloudmule usage   [project] [target]            what each job used (peak RAM, cores, time; GPU pods: minutes
-#                                                   and cost), measured on every remote job (no cost)
+#   cloudmule usage   [project] [target] [--month|--phases]
+#                                                   what each job used (peak RAM, cores, time; GPU pods: minutes
+#                                                   and cost), measured on every remote job (no cost). --month: this
+#                                                   month's GPU spend by project; --phases: each GPU run's phases
 #
 # Work that needs a GPU runs on RunPod instead, one pod per job (RUNPOD_API_KEY and caps in .env):
-#   cloudmule gpus    [project] [target] [--cloud secure|community|all]
-#                                                   the GPUs available now, price, VRAM, whether each fits the
-#                                                   project and the caps, today's spend; ends with RECOMMENDED (no
-#                                                   cost; it deletes orphan pods: cloudmule's, past their time cap)
-#   cloudmule gpu     <project> [target] --gpu <id[,id…]> [--cloud secure] [--approved] [--dry-run] <job> [args…]
+#   cloudmule gpus    [project] [target] [--cloud secure|community|all] [--all]
+#                                                   the GPUs that fit the project and the caps now (--all: every
+#                                                   offer and why not), price, VRAM, vCPUs, RAM, today's and this
+#                                                   month's spend; ends with RECOMMENDED (no cost; it deletes orphan
+#                                                   pods: cloudmule's, past their time cap)
+#   cloudmule gpu     <project> [target] --gpu <id[,id…]> [--cloud secure] [--approved] [--max-minutes n]
+#                     [--wait-for-pod m] [--dry-run] <job> [args…]
 #                                                   one job on a GPU pod: creates it (the first candidate available
 #                                                   within the caps), installs, uploads, runs .cloudmule/jobs/<job>.sh,
 #                                                   downloads its results and DELETES the pod. --approved: the user
 #                                                   said yes to this pod (not needed with a standing approval).
-#                                                   --dry-run: only show what it would create
+#                                                   --dry-run: only show what it would create. Ends GPU_OK, or
+#                                                   GPU_DEGRADED / GPU_TIME_CAP (results downloaded for inspection)
+#   cloudmule gpu-logs [<run tag>|<pod id>] [-f]    a running pod's job log and its GPU/CPU use now (read-only)
 #
 # [target] is only for projects with NEEDS_TARGET=1 (one sub-folder per piece of work, e.g. per video).
-case "${1:-help}" in init|projects|usage|gpus|gpu|help|-h|--help) export CM_NO_TOKEN=1 ;; esac
+case "${1:-help}" in init|projects|usage|gpus|gpu|gpu-logs|help|-h|--help) export CM_NO_TOKEN=1 ;; esac
 . "$(dirname "$0")/lib.sh"
 
 CMD="${1:-help}"; shift || true
@@ -88,7 +94,7 @@ create_options() {
   fi
 }
 
-GPU_CHOICE=""; GPU_CLOUD=SECURE; APPROVED=0   # set by gpu's options
+GPU_CHOICE=""; GPU_CLOUD=SECURE; APPROVED=0; MAX_MINUTES=""; WAIT_FOR_POD=""   # set by gpu's options
 
 # gpu_options <args…>: the leading --gpu/--cloud/--dry-run/--approved options of `gpu` into GPU_CHOICE etc.; the
 # job and its arguments stay in REST
@@ -99,6 +105,8 @@ gpu_options() {
       --cloud) GPU_CLOUD="$(cloud_name "${2:-}")"; shift 2 ;;
       --dry-run) DRY_RUN=1; shift ;;
       --approved) APPROVED=1; shift ;;
+      --max-minutes) MAX_MINUTES="${2:?--max-minutes needs a number of minutes}"; shift 2 ;;
+      --wait-for-pod) WAIT_FOR_POD="${2:?--wait-for-pod needs a number of minutes}"; shift 2 ;;
       *) break ;;
     esac
   done
@@ -170,14 +178,22 @@ setup_project() {   # modules, the project's server-setup.sh, upload, dependenci
   install_project
 }
 
-run_job() {   # run_job <job> [args…]
+run_job() {   # run_job <job> [args…]: runs it, downloads its results (also when it fails), returns its success
   local job="$1"; shift
-  local script args="" a
+  local script args="" a rc=0
   script="$(job_script "$job")"
-  rsh "mkdir -p $R/scripts && cat > $R/scripts/$LEASE-$job.sh" < "$script"
+  # (called as `run_job … || …`, where set -e is off: each step checks its own failure)
+  rsh "mkdir -p $R/scripts && cat > $R/scripts/$LEASE-$job.sh" < "$script" \
+    || { echo "ERROR: could not upload the job script $job.sh" >&2; return 1; }
   for a in "$@"; do args+=" $(printf '%q' "$a")"; done
-  remote_job "$LEASE-$job" "$REMOTE_DIR" "$JOB_ENV; TARGET=$(printf '%q' "${TARGET:-}") bash $R/scripts/$LEASE-$job.sh$args"
+  LAST_LOG=""; PULL_SECONDS=0
+  remote_job "$LEASE-$job" "$REMOTE_DIR" "$JOB_ENV; TARGET=$(printf '%q' "${TARGET:-}") bash $R/scripts/$LEASE-$job.sh$args" \
+    || rc=$?
+  local t0; t0=$(date +%s)
   pull_results
+  PULL_SECONDS=$(( $(date +%s) - t0 ))
+  [ "$rc" = 0 ] || echo "(the job failed: its log and the results it announced were downloaded anyway)" >&2
+  return "$rc"
 }
 
 # finish_server <keep 0|1> <force 0|1>: delete the shared server unless other projects hold leases
@@ -388,8 +404,9 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
 
   attach)
     take_project "$@"; need_server; lease_add
-    remote_wait "$LEASE-${REST[0]:?missing the job name}"
+    rc=0; LAST_LOG=""; remote_wait "$LEASE-${REST[0]:?missing the job name}" || rc=$?
     pull_results
+    exit "$rc"
     ;;
 
   pull)
@@ -478,16 +495,18 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     ;;
 
   gpus)
-    CLOUDS="SECURE COMMUNITY"
+    CLOUDS="SECURE COMMUNITY"; ALL=()
     if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then take_project "$@"; set -- "${REST[@]+"${REST[@]}"}"; else MIN_VRAM_GB=0; fi
     while [ $# -gt 0 ]; do
-      case "$1" in --cloud) CLOUDS="$(cloud_name "${2:-}")"; shift 2 ;; *) die "unknown option: $1" ;; esac
+      case "$1" in --cloud) CLOUDS="$(cloud_name "${2:-}")"; shift 2 ;; --all) ALL=(--all); shift ;; *) die "unknown option: $1" ;; esac
     done
     need_runpod
     gpu_budget
     echo "Caps (cloudmule's .env): at most $RUNPOD_MAX_USD_PER_HOUR USD/h per pod; every pod is deleted after"
     echo "  $RUNPOD_MAX_MINUTES min whatever happens; at most $RUNPOD_MAX_USD_PER_DAY USD of GPU pods per day."
     echo "Today's GPU spend: $SPENT USD, plus $RUNNING_WORST USD worst case of pods running now: $DAY_LEFT_SHOWN USD left today."
+    month_line
+    month_near
     if [ "$RUNPOD_STANDING_APPROVAL" = 1 ]; then
       echo "Standing approval: ON (the agent may create GPU pods without asking, within these caps)."
     else
@@ -505,15 +524,44 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     IFS=$'\t' read -r last_g last_c <<< "$(last_gpu --fields)" || true
     # without a project there is no NEEDS_GPU (`gpu` always has one: gpu_refusals checked it)
     rp_tools rp-gpus --clouds "$CLOUDS" --min-vram "$MIN_VRAM_GB" --needs "${NEEDS_GPU:-}" --max-usd "$RUNPOD_MAX_USD_PER_HOUR" \
-      --max-minutes "$RUNPOD_MAX_MINUTES" --day-left "$DAY_LEFT" --last-gpu "${last_g:-}" --last-cloud "${last_c:-}"
+      --max-minutes "$RUNPOD_MAX_MINUTES" --day-left "$DAY_LEFT" --month-left "$MONTH_LEFT" --last-gpu "${last_g:-}" --last-cloud "${last_c:-}" "${ALL[@]+"${ALL[@]}"}"
     ;;
 
   gpu)
     take_project "$@"; gpu_options "${REST[@]+"${REST[@]}"}"; set -- "${REST[@]+"${REST[@]}"}"
     [ $# -ge 1 ] || die "missing the job name"
     gpu_refusals "$1"
+    PHASE_T=$(date +%s)   # PHASES: how long each step of this run took (seconds)
     need_runpod
-    gpu_budget
+    # this run's own time cap: --max-minutes lowers RUNPOD_MAX_MINUTES (guard, watchdog, pod env, worst case), never raises it
+    POD_MAX_MINUTES="$RUNPOD_MAX_MINUTES"
+    if [ -n "$MAX_MINUTES" ]; then
+      [[ "$MAX_MINUTES" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v m="$MAX_MINUTES" 'BEGIN { exit !(m > 0) }' \
+        || die "--max-minutes must be a number of minutes above 0 (not '$MAX_MINUTES')"
+      awk -v m="$MAX_MINUTES" -v c="$RUNPOD_MAX_MINUTES" 'BEGIN { exit !(m <= c) }' \
+        || die "ABOVE_TIME_CAP: --max-minutes $MAX_MINUTES is above RUNPOD_MAX_MINUTES ($RUNPOD_MAX_MINUTES) in cloudmule's .env: it can only lower a pod's time cap"
+      POD_MAX_MINUTES="$MAX_MINUTES"
+    fi
+    [ -z "$WAIT_FOR_POD" ] || [[ "$WAIT_FOR_POD" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+      || die "--wait-for-pod must be a number of minutes (not '$WAIT_FOR_POD')"
+    # one launch at a time on this computer, from the budget check until the pod exists
+    launch_lock; trap launch_unlock EXIT
+    wait_until=$(( $(date +%s) + $(seconds_of "${WAIT_FOR_POD:-0}") ))
+    while :; do
+      gpu_budget
+      echo "RUNNING_PODS: $RUNNING_COUNT (cloudmule pods running now, from every project, session and computer)"
+      [ -z "$RUNNING_LINES" ] || printf '%s\n' "$RUNNING_LINES"
+      if [ -n "$RUNPOD_MAX_PODS" ] && [ "$RUNNING_COUNT" -ge "$RUNPOD_MAX_PODS" ]; then
+        if [ "$(date +%s)" -lt "$wait_until" ]; then
+          echo "(RUNPOD_MAX_PODS=$RUNPOD_MAX_PODS: waiting for a free pod slot, up to $WAIT_FOR_POD min)"
+          launch_unlock; sleep "${CM_WAIT_POD_POLL:-30}"; launch_lock; continue
+        fi
+        die "TOO_MANY_PODS: $RUNNING_COUNT cloudmule pods are running and RUNPOD_MAX_PODS=$RUNPOD_MAX_PODS (cloudmule's .env): nothing was created${WAIT_FOR_POD:+ (waited $WAIT_FOR_POD min)}; --wait-for-pod <minutes> waits for a slot"
+      fi
+      break
+    done
+    month_near
+    phase budget
     RUN_TAG="$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')" || RUN_TAG=""
     [[ "$RUN_TAG" =~ ^[0-9a-f]{6}$ ]] || die "could not make a random tag for this run (od /dev/urandom)"
     RUN="$(date +%Y%m%d%H%M%S)-$RUN_TAG"   # this run: <time>-<random tag> (records, watchdog, key, pod name)
@@ -521,47 +569,129 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     # Hetzner default of 40 is sized for the shared server and its workspace)
     POD_DISK="$MIN_DISK_GB"; [ "$DISK_SRC" = config ] || POD_DISK=30
     LAUNCH=(--candidates "$GPU_CHOICE" --cloud "$GPU_CLOUD" --min-vram "$MIN_VRAM_GB" --needs "$NEEDS_GPU"
-            --max-usd "$RUNPOD_MAX_USD_PER_HOUR" --max-minutes "$RUNPOD_MAX_MINUTES" --day-left "$DAY_LEFT"
-            --name "$(pod_name "$1")" --image "${RUNPOD_IMAGE:-$RUNPOD_IMAGE_DEFAULT}" --disk "$POD_DISK"
+            --max-usd "$RUNPOD_MAX_USD_PER_HOUR" --max-minutes "$POD_MAX_MINUTES" --day-left "$DAY_LEFT"
+            --month-left "$MONTH_LEFT" --name "$(pod_name "$1")" --image "$(pod_image)" --disk "$POD_DISK"
             --run "$RUN" --project "$PROJECT" --target "${TARGET:--}" --job "$1")
     if [ "$DRY_RUN" = 1 ]; then rp_tools rp-launch "${LAUNCH[@]}" --dry-run; exit 0; fi
     # a throwaway SSH key for this pod only (pods are never shared), deleted with it
     forget_stale_pod_keys
     POD_KEY="$CM_DIR/keys/pod-$RUN"
     ssh-keygen -q -t ed25519 -N "" -C "cloudmule-pod" -f "$POD_KEY"
-    WATCHDOG=""
+    WATCHDOG=""; GPU_JOB="$1"; MAIN_LOG=""; POD_NOTES="$CM_DIR/logs/.pod-notes-$RUN.txt"; : > "$POD_NOTES"
     trap pod_finish EXIT
     trap 'exit 130' INT TERM HUP
     pod_watchdog
     launched="$(rp_tools rp-launch "${LAUNCH[@]}" --pubkey-file "$(winpath "$POD_KEY.pub")")"
     POD_T0=$(date +%s)
-    IFS=$'\t' read -r _ POD_ID POD_COST POD_GPU <<< "$(printf '%s\n' "$launched" | grep '^POD' || true)"
+    launch_unlock   # the pod exists (or the launch failed): the next launch counts it
+    IFS=$'\t' read -r _ POD_ID POD_COST POD_GPU POD_CAT_CPUS POD_CAT_RAM CATALOG_S CREATE_S \
+      <<< "$(printf '%s\n' "$launched" | grep '^POD' || true)"
+    [ "${POD_CAT_CPUS:-}" != - ] || POD_CAT_CPUS=""; [ "${POD_CAT_RAM:-}" != - ] || POD_CAT_RAM=""
+    # prep: this computer's own steps before the catalog (the throwaway key, the watchdog, starting Python)
+    prep=$(( POD_T0 - PHASE_T - ${CATALOG_S:-0} - ${CREATE_S:-0} )); [ "$prep" -ge 0 ] || prep=0
+    PHASES="$PHASES prep=$prep catalog=${CATALOG_S:-?} create=${CREATE_S:-?}"
+    PHASE_T=$POD_T0
     [ -n "${POD_ID:-}" ] || die "rp-launch reported no pod (output: $launched)"
     echo "GPU pod $POD_ID created: $POD_GPU, $POD_COST USD/h ($GPU_CLOUD). It is deleted when the job ends, and at the"
-    echo "  latest after $RUNPOD_MAX_MINUTES min (worst case $(awk -v c="$POD_COST" -v m="$RUNPOD_MAX_MINUTES" \
+    echo "  latest after $POD_MAX_MINUTES min (worst case $(awk -v c="$POD_COST" -v m="$POD_MAX_MINUTES" \
       'BEGIN { printf "%.2f", c * m / 60 }') USD)."
     printf '%s\t%s\t%s\t%s\n' "$POD_GPU" "$GPU_CLOUD" "$PROJECT" "$(date +%Y-%m-%d)" > "$LAST_GPU_FILE"
     addr="$(rp_tools rp-wait "$POD_ID" --timeout "$RUNPOD_BOOT_SECONDS" --interval "$RUNPOD_POLL_SECONDS")"
     pod_ssh $addr
+    printf '%s\n' "$addr" > "$POD_KEY.addr"   # for `cloudmule gpu-logs` while the job runs
     wait_ssh "$RUNPOD_BOOT_SECONDS" || die "NO_PUBLIC_SSH: the GPU pod did not answer over SSH"
     pod_guard
+    pod_allotment
+    phase ssh
     MODULES="$(gpu_modules)"
     USAGE_SINK=/dev/null   # setup jobs: the pod's one usage line is written when it is deleted
-    ensure_modules
-    if [ "$NEEDS_GPU" = graphics ]; then   # a silent software fallback is hundreds of times slower: stop first
-      rsh cloudmule-webgl-check || die "GPU_NOT_USED: Chrome renders WebGL in software on this pod, not on its GPU"
+    ONE_APT_PASS=1; ensure_modules
+    phase modules; for t in $MODULE_TIMES; do PHASES="$PHASES mod.$t"; done
+    if [ "$NEEDS_GPU" = graphics ]; then   # a silent software fallback or a lost context: stop before the upload
+      gpu_graphics_env
+      webgl_check || { rc=$?; phase webgl; webgl_refusal "$rc"; }
+      phase webgl
     fi
     SYNC_EXCLUDE="$SYNC_EXCLUDE ${ONESHOT_EXCLUDE:-}"
-    setup_project
+    server_setup; echo "== Syncing $PROJECT ${TARGET:-} =="; sync_project; install_project   # (modules: done above)
+    phase sync
+    pod_deadline
+    if [ -n "$GPU_SELFTEST" ]; then   # the project's own check (e.g. a few frames against local references)
+      echo "== GPU self-test: $GPU_SELFTEST =="
+      if ! run_job "$GPU_SELFTEST" "${@:2}"; then
+        phase selftest
+        MAIN_LOG="${LAST_LOG:-}"   # the pod's notes go to the self-test's log
+        if [ "$STOPPED_AT_DEADLINE" = 1 ]; then
+          pod_note "GPU_TIME_CAP: the self-test ($GPU_SELFTEST) was stopped at $(( ($(date +%s) - POD_T0) / 60 )) min (cap $POD_MAX_MINUTES); the real job did not run"
+          exit 1
+        fi
+        die "GPU_SELFTEST_FAILED: the project's self-test ($GPU_SELFTEST) failed on this pod; its log and results were downloaded, the real job did not run"
+      fi
+      pod_note "GPU self-test $GPU_SELFTEST: passed"
+      phase selftest
+    fi
     USAGE_SINK="$POD_KEY.measure"
-    run_job "$@"
+    gpu_watch_start "$1"
+    JOB_RC=0; run_job "$@" || JOB_RC=$?
+    t=$(date +%s); PHASES="$PHASES job=$(( t - PHASE_T - PULL_SECONDS )) pull=$PULL_SECONDS"; PHASE_T=$t
+    MAIN_LOG="${LAST_LOG:-}"
+    gpu_watch_summary
+    DEGRADED="$GPU_DEGRADED_WHY"
+    if [ "$NEEDS_GPU" = graphics ] && [ "$STOPPED_AT_DEADLINE" = 0 ]; then
+      # the post-check needs about a minute of the pod (Chrome's start, 2 s of drawing): not past the deadline
+      if [ $(( POD_DEADLINE - $(date +%s) )) -ge 90 ]; then
+        webgl_check --quick || DEGRADED="post-check failed${DEGRADED:+; $DEGRADED}"
+      else
+        pod_note "(post-check skipped: the job ended less than 90 s before the deadline)"
+      fi
+    fi
+    phase postcheck
+    used=$(( $(date +%s) - POD_T0 )); cap_s="$(seconds_of "$POD_MAX_MINUTES")"
+    if [ "$STOPPED_AT_DEADLINE" = 1 ]; then
+      pod_note "GPU_TIME_CAP: stopped at $(( used / 60 )) min (cap $POD_MAX_MINUTES); partial results downloaded"
+      exit 1
+    fi
+    [ $(( used * 100 )) -lt $(( cap_s * 85 )) ] \
+      || pod_note "NEAR_TIME_CAP: $(( (used + 59) / 60 )) of $POD_MAX_MINUTES min (next time split the work or speed it up)"
+    [ "$JOB_RC" = 0 ] || die "the job '$1' failed on the GPU pod (exit $JOB_RC): its log and announced results were downloaded${DEGRADED:+ (also GPU_DEGRADED: $DEGRADED)}"
+    if [ -n "$DEGRADED" ]; then
+      pod_note "GPU_DEGRADED: $DEGRADED"
+      echo "(the job's results were downloaded for inspection; do not treat them as good without checking)" >&2
+      exit 1
+    fi
     echo "GPU_OK: $1"
+    ;;
+
+  gpu-logs)
+    FOLLOW=0; WHO=""
+    for a in "$@"; do case "$a" in -f|--follow) FOLLOW=1 ;; -*) die "unknown option: $a" ;; *) WHO="$a" ;; esac; done
+    rp_files
+    found="$(tools rp-find --records "$(winpath "$POD_RECORDS")" --keys "$(winpath "$CM_DIR/keys")" ${WHO:+--who "$WHO"})" \
+      || exit 3
+    IFS=$'\t' read -r p_id p_run p_proj p_target p_job <<< "$found"
+    POD_KEY="$CM_DIR/keys/pod-$p_run"
+    [ -f "$POD_KEY" ] || die "the SSH key of run $p_run is gone (the pod is being deleted)"
+    pod_ssh $(cat "$POD_KEY.addr")
+    lease="$p_proj"; [ "$p_target" = - ] || lease="$p_proj--$p_target"
+    echo "GPU pod $p_id (run $p_run): $lease $p_job"
+    mode=tail; [ "$FOLLOW" = 0 ] || mode=follow
+    # job lines as they are; the watcher's samples (WATCH …) become one NOW line each round
+    rsh "bash $R/gpu-watch.sh $mode $R/jobs/$lease-$p_job.log $R/gpu-watch.log" | {
+      buf=""
+      while IFS= read -r line; do
+        case "$line" in
+          "WATCH "*) buf="$buf${line#WATCH }"$'\n' ;;
+          "WATCH_END") printf '%s' "$buf" | tools gpu-summary - --last; buf="" ;;
+          *) printf '%s\n' "$line" ;;
+        esac
+      done
+    }
     ;;
 
   usage)
     # local only: logs/usage.tsv (one line per remote job). Reading it also applies both age limits.
     tools prune-logs "$(winpath "$CM_DIR/logs")" "$LOG_KEEP_DAYS"
-    tools usage "$(winpath "$USAGE_FILE")" "$USAGE_KEEP_DAYS" "${1:-}" "${2:-}"
+    tools usage "$(winpath "$USAGE_FILE")" "$USAGE_KEEP_DAYS" "$@"
     ;;
 
   help|-h|--help|*)

@@ -1,8 +1,8 @@
 [
-  {"id": "NVIDIA A40", "displayName": "A40", "manufacturer": "Nvidia", "memory": 48, "price": {"secure": 0.59, "community": 0.44}, "availability": "MEDIUM"},
+  {"id": "NVIDIA A40", "displayName": "A40", "manufacturer": "Nvidia", "memory": 48, "minVcpuCount": 9, "minRam": 50, "price": {"secure": 0.59, "community": 0.44}, "availability": "MEDIUM"},
   {"id": "NVIDIA RTX PRO 4000 Blackwell", "displayName": "RTX PRO 4000", "manufacturer": "Nvidia", "memory": 24, "price": {"secure": 0.57, "community": null}, "availability": "LOW"},
   {"id": "NVIDIA RTX 2000 Ada Generation", "displayName": "RTX 2000 Ada", "manufacturer": "Nvidia", "memory": 16, "price": {"secure": 0.24, "community": 0.16}, "availability": "LOW"},
-  {"id": "NVIDIA L4", "displayName": "L4", "manufacturer": "Nvidia", "memory": 24, "price": {"secure": 0.69, "community": 0.43}, "availability": "LOW"},
+  {"id": "NVIDIA L4", "displayName": "L4", "manufacturer": "Nvidia", "memory": 24, "minVcpuCount": 6, "minRam": 55, "price": {"secure": 0.69, "community": 0.43}, "availability": "LOW"},
   {"id": "NVIDIA RTX A6000", "displayName": "RTX A6000", "manufacturer": "Nvidia", "memory": 48, "price": {"secure": 0.69, "community": 0.49}, "availability": "LOW"},
   {"id": "NVIDIA GeForce RTX 3090", "displayName": "RTX 3090", "manufacturer": "Nvidia", "memory": 24, "price": {"secure": 0.43, "community": 0.22}, "availability": "NONE"},
   {"id": "NVIDIA RTX A4000", "displayName": "RTX A4000", "manufacturer": "Nvidia", "memory": 16, "price": {"secure": 0.25, "community": 0.17}, "availability": "NONE"},

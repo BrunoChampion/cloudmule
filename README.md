@@ -103,10 +103,14 @@ cloudmule gpu  my-video --gpu "NVIDIA A40" --approved render   # one pod: set up
 - **Snapshots:** about €0.01 per GB per month for the saved workspace (dependencies and caches make it grow).
 - `cloudmule usage` shows what each job really used (peak RAM, cores), to pick the size with evidence.
 - **GPU pods (RunPod):** billed while they exist; the GPUs usually available within the default cap cost about
-  0.57–0.70 USD/h (measured: a 10-minute video rendered on an A40 at 0.59 USD/h is about 0.11 USD). Hard limits in `.env`, enforced by cloudmule even
-  when you approve each pod: `RUNPOD_MAX_USD_PER_HOUR` (0.70), `RUNPOD_MAX_MINUTES` per pod (40) and
-  `RUNPOD_MAX_USD_PER_DAY` (2.00). Every pod is deleted when its job ends, by a watchdog on your computer, and by
-  a guard inside the pod even if your computer is off. You approve each pod, unless you give your agent a
+  0.57–0.70 USD/h (measured on an A40 at 0.59 USD/h: a 38-second three.js Short, render 3–4 min, pod ~11 min,
+  about 0.11 USD; a 9-minute video with its 6 chapters rendered at once in one pod, 37 min, about 0.36 USD). Hard
+  limits in `.env`, enforced by cloudmule even when you approve each pod: `RUNPOD_MAX_USD_PER_HOUR` (0.70),
+  `RUNPOD_MAX_MINUTES` per pod (40), `RUNPOD_MAX_USD_PER_DAY` (2.00), and optionally `RUNPOD_MAX_USD_PER_MONTH` and
+  `RUNPOD_MAX_PODS`. Every pod is deleted when its job ends, by a watchdog on your computer, and by a guard inside
+  the pod even if your computer is off; a job nearing the time cap is stopped first and what it finished comes back.
+  Every run reports how busy the GPU, CPU and memory were (`GPU_USE`), so a job made of many tasks fills one GPU
+  (`cloudmule-par`) before you pay for more. You approve each pod, unless you give your agent a
   standing approval (`RUNPOD_STANDING_APPROVAL=1`), always within those limits. `cloudmule usage` shows what each
   GPU job cost.
 
@@ -141,7 +145,8 @@ rm -rf ~/.config/cloudmule <cloudmule-folder>      # and each project's .cloudmu
 - Linux servers only: no iOS builds (they need macOS) and probably no Android emulator (no KVM).
 - One shared server: projects working at the same time share its CPU and RAM.
 - GPU pods: NVIDIA only, RunPod's SECURE cloud only (its COMMUNITY pods have no public SSH), one GPU per pod, and
-  cheap GPUs are often unavailable. Each pod installs Chrome and the project's tools again (~2 min).
+  cheap GPUs are often unavailable. Each pod installs Chrome and the project's tools again (3–6 min, depending on
+  how fast Ubuntu's mirror answers RunPod's hosts) until the prebuilt graphics image is published.
 
 ## Contributing
 

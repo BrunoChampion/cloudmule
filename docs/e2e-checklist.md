@@ -66,3 +66,21 @@ deleted itself). Step 12: `status` and `usage` correct (0.08 USD in all), but no
 page line by line: the key cannot read billing; the console showed 0.17 USD spent that day, including the
 prototype benchmark, vs about 0.09 USD estimated for cloudmule's pods (Billing Explorer reconciles per pod). `supportPublicIp`: REST v2 rejects it (HTTP 422): COMMUNITY stays
 unusable. Details in spec 0004, Further Notes.
+
+### GPU pods that work correctly, say so, start fast and are used fully (spec 0005)
+
+13. WebGL check per backend, on one pod (a probe job that runs `cloudmule-webgl-check` and then
+    `cloudmule-webgl-check --flags-file /etc/cloudmule/chrome-gpu-flags.vulkan`): GL/EGL passes (`WEBGL_CHECK_OK`,
+    renderer NVIDIA before and after, `texel_ok=1`); Vulkan must be caught (`GPU_CONTEXT_LOST`). If Vulkan passes
+    while a real three.js page loses its context there, make the page more demanding (spec 0005).
+14. A graphics project with `GPU_SELFTEST` (a few frames against local references): `gpu` prints the self-test
+    before the job, `GPU_USE …`, `PHASES …` and `GPU_OK`; `POD_CPUS`/`POD_RAM_GB` match the pod's cgroup
+    (`cat /sys/fs/cgroup/cpu.max`), not `nproc`; the job's local log ends with the checks and the pod's numbers.
+    Compare `PHASES` with the last run recorded here.
+15. `cloudmule-par` on a pod: one job, 6 equal tasks, `--slots 1`, `3`, `6` (spec 0005, e2e 2): record each round's
+    wall time, `PAR` line and GPU use (the watcher's samples between the round's start and end), and apply the
+    slots rule.
+16. While a job runs: `cloudmule gpu-logs -f` shows its log and `NOW GPU …`; `status` lists the pod; a second
+    `gpu` prints it under `RUNNING_PODS`.
+17. The prebuilt graphics image (after a rebuild): `gpu` on it installs no module (`PHASES` has no `mod.*` but
+    `ssh`), still runs `cloudmule-gpu-libs` and the WebGL check; command → job start ≤ 1.5 min is the target.

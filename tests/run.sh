@@ -260,14 +260,14 @@ sed -e 's/^# NEEDS_GPU=.*/NEEDS_GPU=graphics/' -e 's/^# MIN_VRAM_GB=.*/MIN_VRAM_
   -e 's/^MODULES=.*/MODULES="node@24.15.0"/' -e 's/^INSTALL_CMD=.*/INSTALL_CMD=""/' \
   "$GFX/.cloudmule/config.sh" > "$WORK/c" && mv "$WORK/c" "$GFX/.cloudmule/config.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\necho rendering\necho "CLOUDMULE_RESULT out/frame.png"\n' > "$GFX/.cloudmule/jobs/render.sh"
-run gpus gfx
+run gpus gfx --all
 check "gpus succeeds" test "$RC" = 0
 check "gpus says what the project needs" has "Project gfx needs: a GPU for graphics work (NEEDS_GPU=graphics); VRAM >= 8 GB (config)"
 check "gpus shows the caps from .env" has "at most 0.70 USD/h per pod"
 check "gpus shows today's spend and what is left" has "Today's GPU spend: 0.00 USD, plus 0.00 USD worst case of pods running now: 2.00 USD left"
 check "gpus says the standing approval is off by default" has "Standing approval: off"
 check "gpus says there is no last choice yet" has "Last choice: none yet"
-check "a fitting GPU shows its price and worst case per pod" row_has "NVIDIA A40" "48 GB  SECURE      0.59    0.393  MEDIUM  fits"
+check "a fitting GPU shows its price and worst case per pod" row_has "NVIDIA A40" "48 GB     9   50 GB  SECURE      0.59    0.393  MEDIUM  fits"
 check "a GPU with too little VRAM does not fit" row_has "NVIDIA RTX A2000" "no: VRAM < 8 GB"
 check "a GPU above the hourly cap does not fit" row_has "NVIDIA H100 80GB HBM3" "no: above the hourly cap 0.70 USD/h"
 check "a GPU that is not NVIDIA does not fit" row_has "AMD Instinct MI300X OAM" "no: not NVIDIA"
@@ -278,20 +278,20 @@ check "COMMUNITY offers are listed as unusable (no public SSH)" row_has "NVIDIA 
 check "the recommendation is the cheapest fitting GPU with MEDIUM or HIGH availability, not a cheaper LOW one" \
   has "RECOMMENDED: NVIDIA A40 SECURE 0.59"
 check "every RunPod request carried the key" bash -c "! grep ' BAD$' '$RP/requests.log' >/dev/null"
-run gpus gfx --cloud community
+run gpus gfx --cloud community --all
 check "--cloud community lists only COMMUNITY offers" bash -c "! printf '%s\n' \"\$1\" | grep ' SECURE ' >/dev/null" _ "$OUT"
-OUT="$(RUNPOD_MAX_USD_PER_HOUR=5 RUNPOD_STANDING_APPROVAL=1 cm gpus gfx)"; printf '%s\n' "$OUT" >> "$ALL_OUT"
+OUT="$(RUNPOD_MAX_USD_PER_HOUR=5 RUNPOD_STANDING_APPROVAL=1 cm gpus gfx --all)"; printf '%s\n' "$OUT" >> "$ALL_OUT"
 check "a cap given in the environment cannot raise the one in .env" row_has "NVIDIA H100 80GB HBM3" "above the hourly cap 0.70"
 check "a standing approval given in the environment does not count" has "Standing approval: off"
 sed 's/^MIN_VRAM_GB=8$/MIN_VRAM_GB=40/' "$GFX/.cloudmule/config.sh" > "$WORK/c" && mv "$WORK/c" "$GFX/.cloudmule/config.sh"
-run gpus gfx
+run gpus gfx --all
 check "MIN_VRAM_GB rules out smaller GPUs" row_has "NVIDIA L4" "no: VRAM < 40 GB"
 sed 's/^MIN_VRAM_GB=40$/MIN_VRAM_GB=8/' "$GFX/.cloudmule/config.sh" > "$WORK/c" && mv "$WORK/c" "$GFX/.cloudmule/config.sh"
 run gpus my-app
 check "a project that does not say whether it needs a GPU is flagged, for the agent to ask" has "NEEDS_GPU is not set"
 # usage.tsv: a GPU pod deleted today that cost 1.80 USD (date … stall_s provider billed_s cost_usd)
 printf '%s\tgfx\t-\trender\tNVIDIA A40\t600\tn/a\tn/a\tn/a\tn/a\t0\tn/a\trunpod\t11000\t1.8000\n' "$NOW" >> "$CM_HOME/logs/usage.tsv"
-run gpus gfx
+run gpus gfx --all
 check "today's spend comes from the usage lines" has "Today's GPU spend: 1.80 USD"
 check "a GPU whose worst case passes what is left today does not fit" row_has "NVIDIA A40" "passes today's cap (0.20 left)"
 check "with no MEDIUM/HIGH GPU left, the cheapest fitting one is recommended" has "RECOMMENDED: NVIDIA RTX 2000 Ada Generation SECURE 0.24"
@@ -300,7 +300,7 @@ scenario '{"catalog_status": 403}'; run gpus gfx
 check "a key without catalog permission is refused with the fix" has "\"catalog read\" permission"
 check "the 403 makes gpus fail" test "$RC" != 0
 scenario
-run gpus
+run gpus --all
 check "gpus without a project applies no VRAM need" row_has "NVIDIA RTX A2000" "fits"
 check "...nor rules out MIG slices (only graphics work needs a whole GPU)" row_has "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb" "fits"
 
@@ -355,7 +355,7 @@ check "the candidates were tried in order" bash -c "grep -o '\"id\": \"NVIDIA[^\
   | grep -F '\"id\": \"NVIDIA RTX PRO 4000 Blackwell\"|\"id\": \"NVIDIA L4\"|\"id\": \"NVIDIA A40\"|' >/dev/null"
 check "the above-cap pod was deleted" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/requests.log"
 check "it reports the GPU and price used" has "GPU pod fakepod2 created: NVIDIA A40, 0.59 USD/h (SECURE)"
-check "the pod is created with the SSH key and the graphics capability, on the default image" \
+check "the pod is created with the SSH key and the graphics capability, on the default graphics image" \
   bash -c "grep -F '\"PUBLIC_KEY\": \"ssh-ed25519 ' '$RP/requests.log' | grep -F 'NVIDIA_DRIVER_CAPABILITIES\": \"all' \
     | grep -F 'runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04' >/dev/null"
 check "the pod carries its own time cap, for any computer's orphan check" grep -qF '"CLOUDMULE_MAX_MINUTES": "40"' "$RP/requests.log"
@@ -364,7 +364,7 @@ check "the pod guard starts first thing after SSH" bash -c "sed -n 2p '$FAKE_SSH
 check "graphics projects get chrome-libs and gpu-graphics before their own modules" \
   bash -c "grep -o 'module-[a-z-]*' '$FAKE_SSH_LOG' | uniq | tr '\n' ' ' | grep 'module-chrome-libs module-gpu-graphics module-node' >/dev/null"
 check "graphics projects check that Chrome renders on the GPU before uploading" \
-  bash -c "grep -n -e '^cloudmule-webgl-check\$' -e 'find . ' '$FAKE_SSH_LOG' | head -1 | grep webgl >/dev/null"
+  bash -c "grep -n -e '^cloudmule-webgl-check' -e 'find . ' '$FAKE_SSH_LOG' | head -1 | grep webgl >/dev/null"
 check "the job's results are downloaded" has "RESULT: $GFX/out/frame.png"
 check "the pod is deleted when the job ends" grep -q '^DELETE /v2/pods/fakepod2 ' "$RP/requests.log"
 check "it reports what the pod cost" has "GPU pod fakepod2 deleted: NVIDIA A40, 0.59 USD/h"
@@ -429,6 +429,379 @@ printf 'RUNPOD_STANDING_APPROVAL=1\n' >> "$CM_HOME/.env"
 gpu_run gfx --gpu "NVIDIA A40" render
 check "with a standing approval in .env, gpu runs without --approved" has "GPU_OK: render"
 sed '/^RUNPOD_STANDING_APPROVAL=1$/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
+
+echo "== gpu: correct pictures, measured runs (spec 0005)"
+export FAKE_SSH_STATE="$WORK/ssh-state"; mkdir -p "$FAKE_SSH_STATE"
+# gpu_env [VAR=value…]: `gpu gfx --gpu "NVIDIA A40" --approved render` with those settings and the fake ssh
+gpu_env() { OUT="$(env "$@" PATH="$REPO/tests/fake-ssh:$PATH" bash "$CM_HOME/bin/cloudmule" gpu gfx --gpu "NVIDIA A40" --approved render 2>&1)"; RC=$?; printf '%s\n' "$OUT" >> "$ALL_OUT"; }
+newest_log() { ls -t "$CM_HOME"/logs/"$1"-*.log 2>/dev/null | grep -v '\.gpu-watch\.log$' | head -1; }
+cfg_drop() { sed "/^$2=/d" "$1/.cloudmule/config.sh" > "$WORK/c" && mv "$WORK/c" "$1/.cloudmule/config.sh"; }
+
+scenario; : > "$RP/requests.log"; : > "$FAKE_SSH_LOG"
+gpu_env
+check "a clean graphics run ends GPU_OK" has "GPU_OK: render"
+check "the default backend (GL over EGL) becomes the pod's Chrome flags" \
+  grep -qF 'cloudmule-gpu-libs; cp -f /etc/cloudmule/chrome-gpu-flags.gl-egl /etc/cloudmule/chrome-gpu-flags' "$FAKE_SSH_LOG"
+check "jobs get the Chrome flags, the ANGLE backend and where to tee Chrome's log" \
+  bash -c "grep -F 'CLOUDMULE_CHROME_ANGLE=gl-egl' '$FAKE_SSH_LOG' | grep -F 'CLOUDMULE_CHROME_LOG=' | grep -F 'CLOUDMULE_CHROME_GPU_FLAGS=' >/dev/null"
+check "the pod's CPUs and RAM come from its cgroup" has "POD_CPUS=9 POD_RAM_GB=50 (jobs: CLOUDMULE_CPUS"
+check "jobs get CLOUDMULE_CPUS and CLOUDMULE_RAM_GB" \
+  bash -c "grep -F 'CLOUDMULE_CPUS=9' '$FAKE_SSH_LOG' | grep -F 'CLOUDMULE_RAM_GB=50' >/dev/null"
+check "jobs get a deadline before the pod's time cap (CLOUDMULE_DEADLINE)" grep -qE 'CLOUDMULE_DEADLINE=[0-9]{9,}' "$FAKE_SSH_LOG"
+check "the watcher runs during the job" grep -qF 'gpu-watch.sh run /root/cloudmule/gpu-watch.log /root/cloudmule/jobs/gfx-render.log /root/cloudmule/chrome-gpu.log' "$FAKE_SSH_LOG"
+check "the WebGL check runs again after the job, short (--quick)" grep -qE '^cloudmule-webgl-check --quick' "$FAKE_SSH_LOG"
+check "the run's GPU, VRAM, CPU (of the pod's allotment) and RAM use are summed up" \
+  has "GPU_USE mean=30% max=40% · VRAM max=5000/46068 MiB · CPU mean=50% of 9 vCPUs · RAM max=12.0/50 GiB"
+check "...with the slots rule's hint" has "GPU_USE_HINT: every resource below 60%"
+check "...and recorded in the pod's usage line" \
+  bash -c "awk -F'\t' '\$13==\"runpod\" && \$16 ~ /^GPU_USE mean=30%/' '$CM_HOME/logs/usage.tsv' | grep . >/dev/null"
+log="$(newest_log gfx-render)"
+check "the WebGL checks and the pod's numbers are appended to the job's local log" \
+  bash -c "grep -F '== cloudmule-webgl-check' '$log' >/dev/null && grep -F 'GPU_USE mean=' '$log' >/dev/null && grep -F 'POD_CPUS=9' '$log' >/dev/null"
+check "the watcher's samples are kept next to the job's log" bash -c "ls '$CM_HOME'/logs/gfx-render-*.gpu-watch.log >/dev/null"
+check "no pod is left after a measured run" test "$(pods_left)" = 0
+
+scenario; gpu_env FAKE_SSH_ALLOC=none
+check "with no limits in the pod's cgroup, CPUs and RAM come from RunPod's catalog, and it says so" \
+  has "POD_CPUS=9 POD_RAM_GB=50 (CPUs from RunPod's catalog"
+
+printf 'GPU_GRAPHICS_BACKEND=vulkan\n' >> "$GFX/.cloudmule/config.sh"; scenario; : > "$FAKE_SSH_LOG"
+gpu_env
+check "GPU_GRAPHICS_BACKEND=vulkan selects the Vulkan flags, with a note" \
+  bash -c "grep -F 'chrome-gpu-flags.vulkan /etc/cloudmule/chrome-gpu-flags' '$FAKE_SSH_LOG' >/dev/null && printf '%s' \"\$1\" | grep -F 'only if your page survives' >/dev/null" _ "$OUT"
+cfg_drop "$GFX" GPU_GRAPHICS_BACKEND; printf 'GPU_GRAPHICS_BACKEND=metal\n' >> "$GFX/.cloudmule/config.sh"
+gpu_env
+check "an unknown Chrome backend is refused" has "GPU_GRAPHICS_BACKEND in"
+cfg_drop "$GFX" GPU_GRAPHICS_BACKEND
+
+scenario; : > "$RP/requests.log"; : > "$FAKE_SSH_LOG"
+gpu_env FAKE_SSH_WEBGL=lost
+check "a lost WebGL context stops the run before the upload (GPU_CONTEXT_LOST)" \
+  bash -c "printf '%s' \"\$1\" | grep 'GPU_CONTEXT_LOST:' >/dev/null && ! grep 'find . ' '$FAKE_SSH_LOG' >/dev/null" _ "$OUT"
+check "...and fails" test "$RC" != 0
+check "...and the pod is deleted" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/requests.log"
+check "...and the check's output is in a local job log" grep -qF 'WEBGL_CHECK_FAIL: GPU_CONTEXT_LOST' "$(newest_log gfx-render)"
+
+scenario; : > "$RP/requests.log"
+gpu_env FAKE_SSH_WEBGL=post-lost
+check "a failed check after the job turns GPU_OK into GPU_DEGRADED" \
+  bash -c "printf '%s' \"\$1\" | grep -F 'GPU_DEGRADED: post-check failed' >/dev/null && ! printf '%s' \"\$1\" | grep 'GPU_OK' >/dev/null" _ "$OUT"
+check "...exits non-zero" test "$RC" != 0
+check "...and still downloads the job's results, for inspection" has "RESULT: $GFX/out/frame.png"
+
+printf 't=1000 gpu=1 vram=900 vram_total=46068 cpu_usec=0 cpus=9 ram=2048 ram_total=51200\nDEGRADED t=1050 pattern=GPU process exited\nt=1100 gpu=2 vram=900 vram_total=46068 cpu_usec=9000000 cpus=9 ram=2048 ram_total=51200\n' > "$WORK/idle-watch.log"
+scenario; gpu_env FAKE_SSH_WATCH="$WORK/idle-watch.log"
+check "a sign in Chrome's log during the job turns the run into GPU_DEGRADED" has "GPU_DEGRADED: GPU process exited at"
+check "a GPU idle while a graphics job ran is reported as degraded" has "GPU_DEGRADED: GPU idle (mean 1.5% over 100 s"
+check "...and the run fails" test "$RC" != 0
+
+scenario; : > "$RP/requests.log"
+gpu_env FAKE_SSH_FAIL=render
+check "a failing job's announced results are downloaded anyway" has "RESULT: $GFX/out/frame.png"
+check "...and gpu still fails" test "$RC" != 0
+check "...and says the results came anyway" has "downloaded anyway"
+OUT="$(FAKE_HC_SCENARIO=running FAKE_SSH_FAIL=example PATH="$REPO/tests/fake-ssh:$PATH" cm job my-app example)"; RC=$?
+printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "job (Hetzner): a failing job's announced results are downloaded" has "RESULT: $APP/out/frame.png"
+check "...and job still fails" test "$RC" != 0
+
+echo "== gpu: the project's self-test and .cloudmule/files/"
+printf '#!/usr/bin/env bash\necho checking frames\necho "CLOUDMULE_RESULT out/check.png"\n' > "$GFX/.cloudmule/jobs/gpu-selftest.sh"
+printf 'GPU_SELFTEST=gpu-selftest\n' >> "$GFX/.cloudmule/config.sh"
+scenario; : > "$FAKE_SSH_LOG"
+OUT="$(PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved render ep-01)"; RC=$?; printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "with GPU_SELFTEST the run still ends GPU_OK when it passes" has "GPU_OK: render"
+order="$(awk '/find \. /{if(!a)a=NR} /scripts\/gfx-gpu-selftest\.sh/{if(!b)b=NR} /scripts\/gfx-render\.sh/{if(!c)c=NR} END{print (a && b && c && a < b && b < c) ? "ok" : a" "b" "c}' "$FAKE_SSH_LOG")"
+check "the self-test runs after the upload and before the job" test "$order" = ok
+check "...with the job's arguments" bash -c "grep -F 'scripts/gfx-gpu-selftest.sh ep-01' '$FAKE_SSH_LOG' >/dev/null"
+scenario; : > "$RP/requests.log"; : > "$FAKE_SSH_LOG"
+gpu_env FAKE_SSH_FAIL=gpu-selftest
+check "a failing self-test stops the run (GPU_SELFTEST_FAILED)" has "GPU_SELFTEST_FAILED"
+check "...the real job never runs" bash -c "! grep 'scripts/gfx-render.sh' '$FAKE_SSH_LOG' >/dev/null"
+check "...the self-test's results are downloaded" has "RESULT: $GFX/out/frame.png"
+check "...and the pod is deleted" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/requests.log"
+cfg_drop "$GFX" GPU_SELFTEST; printf 'GPU_SELFTEST=no-such-check\n' >> "$GFX/.cloudmule/config.sh"
+scenario; : > "$RP/requests.log"; gpu_env
+check "a GPU_SELFTEST that names no job is refused before anything is created" \
+  bash -c "printf '%s' \"\$1\" | grep GPU_SELFTEST_MISSING >/dev/null && [ \"\$(grep -c '^POST /v2/pods ' '$RP/requests.log')\" = 0 ]" _ "$OUT"
+cfg_drop "$GFX" GPU_SELFTEST; rm -f "$GFX/.cloudmule/jobs/gpu-selftest.sh"
+
+mkdir -p "$GFX/.cloudmule/files"; printf 'helper() { :; }\n' > "$GFX/.cloudmule/files/helpers.sh"
+scenario; : > "$FAKE_SSH_LOG"; gpu_env
+check ".cloudmule/files/ is uploaded to .cloudmule-files/" \
+  bash -c "grep -F \"mkdir -p '/root/work/gfx/.cloudmule-files'\" '$FAKE_SSH_LOG' >/dev/null && grep -qx 'helpers.sh' '$CM_HOME/logs/.sync-push-gfx-files.txt'"
+check "jobs find it in CLOUDMULE_FILES" grep -qF 'CLOUDMULE_FILES=/root/work/gfx/.cloudmule-files' "$FAKE_SSH_LOG"
+check "the rest of .cloudmule/ is still never uploaded" bash -c "! grep '\.cloudmule/' '$CM_HOME/logs/.sync-push-gfx.txt' >/dev/null"
+rm -rf "$GFX/.cloudmule/files"
+
+echo "== gpu: a CUDA project (not graphics) gets the same measurements"
+ML="$WORK/ml"; mkdir -p "$ML"; cm init "$ML" --name ml >/dev/null
+sed -e 's/^# NEEDS_GPU=.*/NEEDS_GPU=cuda/' -e 's/^MODULES=.*/MODULES=""/' -e 's/^INSTALL_CMD=.*/INSTALL_CMD=""/' \
+  "$ML/.cloudmule/config.sh" > "$WORK/c" && mv "$WORK/c" "$ML/.cloudmule/config.sh"
+printf '#!/usr/bin/env bash\necho training\n' > "$ML/.cloudmule/jobs/train.sh"
+scenario; : > "$FAKE_SSH_LOG"
+OUT="$(FAKE_SSH_WATCH="$WORK/idle-watch.log" PATH="$REPO/tests/fake-ssh:$PATH" cm gpu ml --gpu "NVIDIA A40" --approved train)"; RC=$?
+printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "for cuda work a low GPU use is reported, not an error" bash -c "printf '%s' \"\$1\" | grep 'GPU_OK: train' >/dev/null && printf '%s' \"\$1\" | grep 'GPU_USE mean=2%' >/dev/null && ! printf '%s' \"\$1\" | grep GPU_DEGRADED >/dev/null" _ "$OUT"
+check "cuda pods start from the CUDA image" grep -qF '"image": "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04"' "$RP/requests.log"
+check "cuda pods get no Chrome and no WebGL check" bash -c "! grep -e webgl-check -e chrome-libs -e chrome-gpu-flags '$FAKE_SSH_LOG' >/dev/null"
+check "...but the watcher runs (without a Chrome log) and jobs get the pod's CPUs" \
+  bash -c "grep -F 'gpu-watch.sh run /root/cloudmule/gpu-watch.log /root/cloudmule/jobs/ml-train.log - ' '$FAKE_SSH_LOG' >/dev/null && grep -F 'CLOUDMULE_CPUS=9' '$FAKE_SSH_LOG' >/dev/null"
+
+echo "== gpu: a deadline before the time cap"
+printf 'RUNPOD_MAX_MINUTES=0.5\n' >> "$CM_HOME/.env"
+scenario; : > "$RP/requests.log"; : > "$FAKE_SSH_LOG"; rm -f "$FAKE_SSH_STATE"/*
+gpu_env CM_POLL_SECONDS=1 FAKE_SSH_SLOW=render
+check "at the deadline the job is stopped (TERM to its process group)" grep -qF 'kill -TERM' "$FAKE_SSH_LOG"
+check "...what it announced so far is downloaded" has "RESULT: $GFX/out/frame.png"
+check "...the run ends GPU_TIME_CAP" has "GPU_TIME_CAP: stopped at"
+check "...it fails" test "$RC" != 0
+check "...and the pod is deleted" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/requests.log"
+scenario; rm -f "$FAKE_SSH_STATE"/*
+gpu_env CM_POLL_SECONDS=1 FAKE_SSH_NEAR=render
+check "a run that ends near its time cap says so (NEAR_TIME_CAP)" has "NEAR_TIME_CAP:"
+check "...and is still GPU_OK" has "GPU_OK: render"
+sed '/^RUNPOD_MAX_MINUTES=0.5$/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
+
+echo "== phase timings, one apt pass, catalog cache (spec 0005, step a)"
+run gpus gfx
+check "gpus shows only the fitting GPUs by default" bash -c "! printf '%s\n' \"\$1\" | grep ' no: ' >/dev/null && printf '%s\n' \"\$1\" | grep -E '^NVIDIA A40 .* fits' >/dev/null" _ "$OUT"
+check "...says how many others there are and how to see them" has "and why: --all."
+check "...with the vCPUs and RAM of each GPU's pods (catalog)" has "VCPU     RAM"
+check "gpus writes the catalog cache" test -s "$CM_HOME/logs/runpod-catalog.json"
+scenario; : > "$RP/requests.log"; : > "$FAKE_SSH_LOG"
+gpu_env
+check "gpu reads the price from a fresh catalog cache: no catalog request" bash -c "! grep '^GET /v2/catalog' '$RP/requests.log' >/dev/null"
+check "the run prints how long each phase took (PHASES)" \
+  bash -c "printf '%s\n' \"\$1\" | grep -E '^PHASES budget=[0-9]+ prep=[0-9]+ catalog=[0-9]+ create=[0-9]+ ssh=[0-9]+ modules=[0-9]+ mod\.apt=[0-9]+ .*webgl=[0-9]+ sync=[0-9]+ job=[0-9]+ pull=[0-9]+ postcheck=[0-9]+ delete=[0-9]+$' >/dev/null" _ "$OUT"
+check "...also in the job's local log" grep -qE '^PHASES budget=' "$(newest_log gfx-render)"
+check "...and in the pod's usage line (with the delete)" \
+  bash -c "awk -F'\t' '\$13==\"runpod\" && \$17 ~ /^PHASES budget=.* delete=[0-9]+\$/' '$CM_HOME/logs/usage.tsv' | grep . >/dev/null"
+run usage --phases
+check "usage --phases shows each GPU run's phases and GPU use" bash -c "printf '%s\n' \"\$1\" | grep -E '^  PHASES budget=' >/dev/null && printf '%s\n' \"\$1\" | grep -E '^  GPU_USE mean=' >/dev/null" _ "$OUT"
+check "a pod gets ONE apt pass with every module's packages, Chrome's included" \
+  bash -c "[ \"\$(grep -c 'apt-pass.sh' '$FAKE_SSH_LOG')\" = 1 ] && grep 'apt-pass.sh' '$FAKE_SSH_LOG' | grep -F 'build-essential' | grep -F 'fontconfig' | grep -F 'google-chrome-stable' >/dev/null"
+check "...each package once, even when two modules declare it, and 'a|b' kept as one word" \
+  bash -c "grep -o 'apt-pass.sh[^;]*' '$FAKE_SSH_LOG' | head -1 | grep -o 'ca-certificates' | wc -l | grep -x ' *1' >/dev/null && grep 'apt-pass.sh' '$FAKE_SSH_LOG' | grep -F 'libatk1.0-0t64' | grep -F 'libatk1.0-0 ' >/dev/null"
+check "...with the download-only modules (node) running beside it" grep -qF 'early-node-24.15.0.out' "$FAKE_SSH_LOG"
+check "...and each module's own steps after it, without apt" bash -c "grep -F '/root/cloudmule/modules/gpu-graphics.sh' '$FAKE_SSH_LOG' | grep -v 'apt-pass' >/dev/null"
+: > "$FAKE_SSH_LOG"
+OUT="$(FAKE_HC_SCENARIO=running PATH="$REPO/tests/fake-ssh:$PATH" cm job my-app example)"; printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "the shared server still installs module by module, each with its own apt packages" \
+  bash -c "grep 'modules/base.sh' '$FAKE_SSH_LOG' | grep -F 'apt-pass.sh' | grep -F 'build-essential' >/dev/null && ! grep -F 'modules-apt' '$FAKE_SSH_LOG' >/dev/null"
+"$PY" -I -c 'import json, sys, time
+p = sys.argv[1]; d = json.load(open(p)); d["SECURE"]["time"] = time.time() - 3600; json.dump(d, open(p, "w"))' \
+  "$(winpath "$CM_HOME/logs/runpod-catalog.json")"
+scenario; : > "$RP/requests.log"; gpu_env
+check "with a stale catalog cache, gpu reads the catalog again" grep -q '^GET /v2/catalog' "$RP/requests.log"
+scenario; : > "$RP/requests.log"
+OUT="$(PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA RTX A4000" --approved render)"; printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "a GPU the catalog gives no vCPUs or RAM for: the run's numbers stay in place (unknown, not shifted)" \
+  bash -c "printf '%s\n' \"\$1\" | grep 'POD_CPUS=9 POD_RAM_GB=50 (jobs' >/dev/null && printf '%s\n' \"\$1\" | grep -E '^PHASES budget=[0-9]+ prep=[0-9]+ catalog=[0-9]+ create=[0-9]+ ' >/dev/null" _ "$OUT"
+check "a named GPU the catalog lists as none available is still tried (RunPod decides)" \
+  bash -c "grep -F '\"id\": \"NVIDIA RTX A4000\"' '$RP/requests.log' >/dev/null && printf '%s' \"\$1\" | grep 'GPU_OK: render' >/dev/null" _ "$OUT"
+check "graphics pods start from the graphics image setting (RUNPOD_IMAGE_GRAPHICS_DEFAULT)" \
+  bash -c "grep -F '\"image\": \"runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04\"' '$RP/requests.log' >/dev/null"
+check "pods get Ubuntu's packages from the faster official mirror (RUNPOD_APT_MIRROR)" \
+  bash -c "grep -F 'CM_APT_MIRROR=https://mirrors.edge.kernel.org/ubuntu' '$FAKE_SSH_LOG' >/dev/null"
+
+echo "== lib/apt-pass.sh (fake apt-get and apt-cache)"
+mkdir -p "$WORK/aptbin"
+printf '#!/bin/sh\necho "apt-get $*" >> "%s"\n' "$WORK/apt.log" > "$WORK/aptbin/apt-get"
+printf '#!/bin/sh\n[ "$2" = libx1 ] || [ "$2" = libz9t64 ]\n' > "$WORK/aptbin/apt-cache"
+chmod +x "$WORK/aptbin/apt-get" "$WORK/aptbin/apt-cache"; : > "$WORK/apt.log"
+PATH="$WORK/aptbin:$PATH" bash "$REPO/remote/modules/lib/apt-pass.sh" pkg-a 'libx1t64|libx1' 'libz9t64|libz9' pkg-b >/dev/null
+check "apt-pass: one update, one install, the alternative this Ubuntu has" \
+  bash -c "[ \"\$(grep -c 'apt-get update' '$WORK/apt.log')\" = 1 ] && grep -qx 'apt-get install -y -q --no-install-recommends pkg-a libx1 libz9t64 pkg-b' '$WORK/apt.log'"
+
+echo "== gpu-logs (a running pod's job log, read-only)"
+run gpu-logs
+check "gpu-logs with no running pod says so" has "NO_RUNNING_POD"
+check "...and fails" test "$RC" != 0
+mkdir -p "$CM_HOME/logs/runpod"
+printf '{"id": "live1", "run": "20261119000000-abc123", "project": "gfx", "target": "-", "job": "render", "created": %s, "cost": 0.59}\n' \
+  "$(date +%s)" > "$CM_HOME/logs/runpod/live1.json"
+: > "$CM_HOME/keys/pod-20261119000000-abc123"; echo "127.0.0.1 2222" > "$CM_HOME/keys/pod-20261119000000-abc123.addr"
+: > "$FAKE_SSH_LOG"
+OUT="$(PATH="$REPO/tests/fake-ssh:$PATH" cm gpu-logs abc123)"; RC=$?
+check "gpu-logs shows the tail of the running job's log" has "rendering frame 120/1128"
+check "...and what the watcher sees now (CPU against the pod's allotment)" \
+  has "NOW GPU 25% · VRAM 4100/46068 MiB · CPU 80% of 9 vCPUs · RAM 10.1/50 GiB"
+check "...reading the job's log on the pod" grep -qF 'gpu-watch.sh tail /root/cloudmule/jobs/gfx-render.log /root/cloudmule/gpu-watch.log' "$FAKE_SSH_LOG"
+OUT="$(PATH="$REPO/tests/fake-ssh:$PATH" cm gpu-logs -f)"
+check "gpu-logs -f follows this computer's newest pod" grep -qF 'gpu-watch.sh follow /root/cloudmule/jobs/gfx-render.log' "$FAKE_SSH_LOG"
+rm -f "$CM_HOME/logs/runpod/live1.json" "$CM_HOME/keys/pod-20261119000000-abc123" "$CM_HOME/keys/pod-20261119000000-abc123.addr"
+
+echo "== cloudmule-par (a job's tasks, N at a time)"
+PD="$WORK/par"; mkdir -p "$PD/state"
+# each task marks itself running, counts how many run, notes its private temp dir, waits 1 s; task 2 fails
+for k in 1 2 3 4 5; do
+  extra=""; [ "$k" = 2 ] && extra="; exit 3"
+  printf 'mkdir "%s/state/run.$CLOUDMULE_TASK"; ls "%s/state" | grep -c "^run" >> "%s/conc"; echo "$CLOUDMULE_TASK_TMP" > "%s/tmp.$CLOUDMULE_TASK"; date +%%s > "%s/start.$CLOUDMULE_TASK"; sleep 1; rmdir "%s/state/run.$CLOUDMULE_TASK"; echo "task $CLOUDMULE_TASK says hi"%s\n' \
+    "$PD" "$PD" "$PD" "$PD" "$PD" "$PD" "$extra"
+done > "$PD/tasks.txt"
+printf '# a comment\n\n' >> "$PD/tasks.txt"
+OUT="$(bash "$REPO/remote/modules/lib/cloudmule-par.sh" --slots 2 --logs "$PD/logs" "$PD/tasks.txt" 2>&1)"; RC=$?
+check "cloudmule-par never runs more than N tasks at once" test "$(sort -n "$PD/conc" | tail -1)" = 2
+check "...and starts the next one as soon as one ends (5 one-second tasks, 2 slots: ~3 s)" \
+  bash -c "w=\$(printf '%s\n' \"\$1\" | sed -n 's/.* wall=\([0-9]*\)\$/\1/p'); [ \"\$w\" -ge 2 ] && [ \"\$w\" -le 8 ]" _ "$OUT"
+check "...one log per task" bash -c "grep -qx 'task 4 says hi' '$PD/logs/4.log' && [ \"\$(ls '$PD/logs' | wc -l | tr -d ' ')\" = 5 ]"
+check "...one line per task with its exit code and time" bash -c "printf '%s\n' \"\$1\" | grep -E '^TASK 2 exit=3 secs=[0-9]+$' >/dev/null && printf '%s\n' \"\$1\" | grep -E '^TASK 5 exit=0 secs=[0-9]+$' >/dev/null" _ "$OUT"
+check "...each task gets its own temp dir (CLOUDMULE_TASK_TMP)" bash -c "[ \"\$(cat '$PD'/tmp.* | sort -u | wc -l | tr -d ' ')\" = 5 ]"
+check "...a failed task fails the run, while the others still finish" \
+  bash -c "[ $RC != 0 ] && printf '%s\n' \"\$1\" | grep -E '^PAR slots=2 tasks=5 ok=4 failed=1 wall=[0-9]+$' >/dev/null" _ "$OUT"
+OUT="$(bash "$REPO/remote/modules/lib/cloudmule-par.sh" --slots 0 "$PD/tasks.txt" 2>&1)"; RC=$?
+check "cloudmule-par refuses a slot count that is not a whole number >= 1" bash -c "[ $RC = 2 ]"
+check "the base module installs cloudmule-par (on every GPU pod)" grep -qF 'lib/cloudmule-par.sh' "$REPO/remote/modules/base.sh"
+
+echo "== RunPod: pods already running, an optional cap, the launch lock, --max-minutes"
+RUNNING_POD='{"id": "other7", "name": "cloudmule-short-form-render-long-f00ba4", "cost": 0.59, "gpu": {"id": "NVIDIA A40"}, "env": {"CLOUDMULE_MAX_MINUTES": "40"}, "runtime": {"uptimeInSeconds": 720}, "desiredStatus": "RUNNING"}'
+scenario "{\"pods\": [$RUNNING_POD]}"; : > "$RP/requests.log"
+gpu_env
+check "gpu lists the cloudmule pods already running, from every session (RUNNING_PODS)" has "RUNNING_PODS: 1"
+check "...one line per pod: project/job (its name), minutes up, run tag" has "cloudmule-short-form-render-long-f00ba4 (other7): NVIDIA A40, up 12 min, run tag f00ba4"
+check "...and goes on: with no RUNPOD_MAX_PODS it never blocks" has "GPU_OK: render"
+printf 'RUNPOD_MAX_PODS=1\n' >> "$CM_HOME/.env"
+scenario "{\"pods\": [$RUNNING_POD]}"; : > "$RP/requests.log"
+gpu_env
+check "with RUNPOD_MAX_PODS=1 and one pod running, gpu is refused (TOO_MANY_PODS)" \
+  bash -c "printf '%s\n' \"\$1\" | grep 'TOO_MANY_PODS' >/dev/null && printf '%s\n' \"\$1\" | grep 'cloudmule-short-form-render-long-f00ba4' >/dev/null" _ "$OUT"
+check "...nothing is created" test "$(posts)" = 0
+check "...and it fails" test "$RC" != 0
+OUT="$(RUNPOD_MAX_PODS=9 PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved render)"
+check "RUNPOD_MAX_PODS cannot be raised from the environment" has "TOO_MANY_PODS"
+scenario "{\"pods\": [$RUNNING_POD]}"; : > "$RP/requests.log"
+( sleep 3; scenario ) & SWAP=$!
+OUT="$(CM_WAIT_POD_POLL=1 PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved --wait-for-pod 1 render)"; RC=$?
+wait "$SWAP"
+check "--wait-for-pod waits until a slot is free, then goes on" bash -c "printf '%s\n' \"\$1\" | grep 'waiting' >/dev/null && printf '%s\n' \"\$1\" | grep 'GPU_OK: render' >/dev/null" _ "$OUT"
+scenario "{\"pods\": [$RUNNING_POD]}"
+OUT="$(CM_WAIT_POD_POLL=1 PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved --wait-for-pod 0.05 render)"; RC=$?
+check "...and gives up with TOO_MANY_PODS when the time runs out" bash -c "printf '%s\n' \"\$1\" | grep TOO_MANY_PODS >/dev/null && [ $RC != 0 ]" _ "$OUT"
+sed '/^RUNPOD_MAX_PODS=1$/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
+
+scenario; : > "$RP/requests.log"; : > "$FAKE_SSH_LOG"
+run gpu gfx --gpu "NVIDIA A40" --max-minutes 60 --approved render
+check "--max-minutes above RUNPOD_MAX_MINUTES is refused (never raised)" bash -c "printf '%s\n' \"\$1\" | grep 'ABOVE_TIME_CAP' >/dev/null && [ $RC != 0 ]" _ "$OUT"
+check "...before anything is created" test "$(posts)" = 0
+run gpu gfx --gpu "NVIDIA A40" --max-minutes 25 --dry-run render
+check "--max-minutes sets the worst case reserved (0.59 USD/h x 25 min)" has "WOULD_CREATE: NVIDIA A40 SECURE 0.59 0.246"
+gpu_run gfx --gpu "NVIDIA A40" --max-minutes 25 --approved render
+check "...the pod's own cap in its env" grep -qF '"CLOUDMULE_MAX_MINUTES": "25"' "$RP/requests.log"
+check "...the in-pod guard" has "Pod guard armed: the pod deletes itself in 2"
+check "...and the deadline before it" bash -c "printf '%s\n' \"\$1\" | grep 'latest after 25 min' >/dev/null" _ "$OUT"
+check "...and the run still works" has "GPU_OK: render"
+
+# the launch lock: two runs whose worst cases together pass the daily cap (0.60 USD; each A40 pod reserves 0.393)
+printf 'RUNPOD_MAX_USD_PER_DAY=0.60\n' >> "$CM_HOME/.env"
+scenario; : > "$RP/requests.log"
+( PATH="$REPO/tests/fake-ssh:$PATH" bash "$CM_HOME/bin/cloudmule" gpu gfx --gpu "NVIDIA A40" --approved render > "$WORK/lockA.out" 2>&1 ) &
+A=$!
+( PATH="$REPO/tests/fake-ssh:$PATH" bash "$CM_HOME/bin/cloudmule" gpu gfx --gpu "NVIDIA A40" --approved render > "$WORK/lockB.out" 2>&1 ) &
+B=$!
+wait "$A" "$B"
+check "two launches at once that together pass the daily cap: exactly one is refused" \
+  bash -c "[ \"\$(cat '$WORK/lockA.out' '$WORK/lockB.out' | grep -c 'DAILY_CAP_REACHED')\" = 1 ]"
+sed '/^RUNPOD_MAX_USD_PER_DAY=0.60$/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
+bash -c 'exit 0' & DEAD=$!; wait "$DEAD"   # a pid that just ended
+mkdir -p "$CM_HOME/logs/runpod-launch.lock"; echo "$DEAD" > "$CM_HOME/logs/runpod-launch.lock/pid"
+scenario; run gpu gfx --gpu "NVIDIA A40" --dry-run render
+check "a launch lock left by a dead process is removed" bash -c "printf '%s\n' \"\$1\" | grep 'stale launch lock' >/dev/null && printf '%s\n' \"\$1\" | grep WOULD_CREATE >/dev/null" _ "$OUT"
+sleep 30 & HOLDER=$!
+mkdir -p "$CM_HOME/logs/runpod-launch.lock"; echo "$HOLDER" > "$CM_HOME/logs/runpod-launch.lock/pid"
+OUT="$(CM_LAUNCH_LOCK_SECONDS=2 cm gpu gfx --gpu "NVIDIA A40" --dry-run render)"; RC=$?
+kill "$HOLDER" 2>/dev/null; rm -rf "$CM_HOME/logs/runpod-launch.lock"
+check "a launch lock held too long by a live process: LAUNCH_LOCK_TIMEOUT" bash -c "printf '%s\n' \"\$1\" | grep LAUNCH_LOCK_TIMEOUT >/dev/null && [ $RC != 0 ]" _ "$OUT"
+
+echo "== the GPU watcher against fake cgroup files (v2, v1) and a fake nvidia-smi"
+mkdir -p "$WORK/fakebin"; printf '#!/bin/sh\necho "37, 5000, 46068"\n' > "$WORK/fakebin/nvidia-smi"; chmod +x "$WORK/fakebin/nvidia-smi"
+CG="$WORK/cg2"; mkdir -p "$CG"
+printf 'cpu memory\n' > "$CG/cgroup.controllers"; echo '900000 100000' > "$CG/cpu.max"; echo 49999998976 > "$CG/memory.max"
+printf 'usage_usec 5000000\nuser_usec 4000000\n' > "$CG/cpu.stat"; echo 10737418240 > "$CG/memory.current"
+printf 'anon 9663676416\ninactive_file 1073741824\n' > "$CG/memory.stat"
+watch_sh() { PATH="$WORK/fakebin:$PATH" CLOUDMULE_CGROUP_ROOT="$1" bash "$REPO/remote/gpu-watch.sh" "${@:2}"; }
+OUT="$(watch_sh "$CG" alloc)"
+check "cgroup v2: the pod's allotment from cpu.max and memory.max" has "POD_CPUS=9 POD_RAM_GB=50"
+OUT="$(watch_sh "$CG" sample)"
+check "cgroup v2: a sample has GPU, VRAM, the cgroup's CPU time and quota, RAM without the drop-able cache" \
+  has "gpu=37 vram=5000 vram_total=46068 cpu_usec=5000000 cpus=9 ram=9216 ram_total=47684"
+CG1="$WORK/cg1"; mkdir -p "$CG1/cpu" "$CG1/cpuacct" "$CG1/memory"
+echo 600000 > "$CG1/cpu/cpu.cfs_quota_us"; echo 100000 > "$CG1/cpu/cpu.cfs_period_us"; echo 7000000000 > "$CG1/cpuacct/cpuacct.usage"
+echo 30000000000 > "$CG1/memory/memory.limit_in_bytes"; echo 2147483648 > "$CG1/memory/memory.usage_in_bytes"
+printf 'total_inactive_file 0\n' > "$CG1/memory/memory.stat"
+OUT="$(watch_sh "$CG1" alloc)"; check "cgroup v1: the allotment from cfs_quota_us and limit_in_bytes" has "POD_CPUS=6 POD_RAM_GB=30"
+OUT="$(watch_sh "$CG1" sample)"; check "cgroup v1: CPU time from cpuacct.usage" has "cpu_usec=7000000 cpus=6 ram=2048 ram_total=28610"
+echo 'max 100000' > "$CG/cpu.max"; echo max > "$CG/memory.max"
+OUT="$(watch_sh "$CG" alloc)"; check "no quota and no limit: empty values (gpu falls back to the catalog)" has "POD_CPUS= POD_RAM_GB="
+OUT="$(watch_sh "$CG" sample 9)"; check "...and the CPU use is then measured against the catalog's vCPUs" has "cpus=9"
+printf 'working\nEXIT 0\n' > "$WORK/job.log"; printf 'THREE.WebGLRenderer: Context Lost.\n' > "$WORK/chrome.log"; : > "$WORK/w.log"
+watch_sh "$CG" run "$WORK/w.log" "$WORK/job.log" "$WORK/chrome.log" 9 20 1
+check "the watcher stops when the job's log ends" test "$(grep -c '^t=' "$WORK/w.log")" = 1
+check "...and notes a sign in Chrome's log" grep -qF 'DEGRADED t=' "$WORK/w.log"
+printf 't=100 gpu=10 vram=1 vram_total=2 cpu_usec=0 cpus=9 ram=1 ram_total=2\nt=102 gpu=10 vram=1 vram_total=2 cpu_usec=9000000 cpus=9 ram=1 ram_total=2\n' > "$WORK/w2.log"
+OUT="$("$PY" -I "$(winpath "$CM_HOME/bin/tools.py")" gpu-summary "$(winpath "$WORK/w2.log")" --needs cuda 2>&1)"
+check "CPU use is against the pod's allotment, not the host's threads (9 CPU-s in 2 s on 9 vCPUs = 50%)" has "CPU mean=50% of 9 vCPUs"
+check "a cuda run never gets GPU_DEGRADED from the watcher" hasnt "GPU_DEGRADED"
+cat > "$WORK/verdicts.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("check", sys.argv[1]); m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+nv = "ANGLE (NVIDIA Corporation, NVIDIA A40/PCIe/SSE2, OpenGL ES 3.2)"
+for name, r, err, problem in [
+    ("ok", {"renderer_before": nv, "renderer_after": nv, "lost": 0, "texel_ok": 1}, "", ""),
+    ("software", {"renderer_before": "ANGLE (Google, SwiftShader Device)", "renderer_after": "x", "lost": 0, "texel_ok": 1}, "", ""),
+    ("lost-at-once", {"renderer_before": "null", "renderer_after": "null", "lost": 1, "texel_ok": 0}, "", ""),
+    ("restored", {"renderer_before": nv, "renderer_after": nv, "lost": 0, "texel_ok": 0}, "", ""),
+    ("gpu-crash", None, "[1:2:ERROR] GPU process exited unexpectedly", "no answer"),
+    ("no-chrome", None, "", "could not start google-chrome")]:
+    print(name, m.verdict(r, [], err, problem)[0])
+PY
+OUT="$("$PY" -I "$(winpath "$WORK/verdicts.py")" "$(winpath "$CM_HOME/remote/modules/lib/webgl-check.py")" 2>&1)"
+check "the WebGL check's verdicts: NVIDIA ok; software, no Chrome -> GPU_NOT_USED (3); loss, wrong texel, GPU crash -> GPU_CONTEXT_LOST (4)" \
+  bash -c "[ \"\$(printf '%s' \"\$1\" | tr -d '\r' | tr '\n' ' ')\" = 'ok 0 software 3 lost-at-once 4 restored 4 gpu-crash 4 no-chrome 3' ]" _ "$OUT"
+
+echo "== the prebuilt graphics image (images/gpu-graphics)"
+IMG="$(sed -n 's/^RUNPOD_IMAGE_GRAPHICS_DEFAULT="\(.*\)"$/\1/p' "$REPO/bin/lib.sh")"
+IMG_SRC="$(sed -n 's/^RUNPOD_IMAGE_GRAPHICS_SOURCE="\{0,1\}\([0-9a-f]*\).*/\1/p' "$REPO/bin/lib.sh")"
+SRC_NOW="$("$PY" -I "$(winpath "$REPO/images/gpu-graphics/modules-hash.py")" "$(winpath "$REPO")")"
+case "$IMG" in
+  ghcr.io/*@sha256:*)
+    check "the prebuilt image was built from today's modules (else rebuild it: .github/workflows/gpu-image.yml)" \
+      test "$IMG_SRC" = "$SRC_NOW" ;;
+  *) skip "no prebuilt graphics image recorded yet (RUNPOD_IMAGE_GRAPHICS_DEFAULT is not a ghcr.io digest)" ;;
+esac
+check "the image's module list is the one a graphics pod installs (base chrome-libs gpu-graphics node ffmpeg)" \
+  grep -qF 'install-modules.sh base chrome-libs gpu-graphics "node@${NODE_VERSION}" ffmpeg' "$REPO/images/gpu-graphics/Dockerfile"
+check "the image's source hash can be computed (16 hex characters)" \
+  bash -c "printf '%s' '$SRC_NOW' | grep -E '^[0-9a-f]{16}$' >/dev/null"
+
+echo "== the monthly cap (RUNPOD_MAX_USD_PER_MONTH)"
+printf 'RUNPOD_MAX_USD_PER_MONTH=15\nRUNPOD_MAX_USD_PER_DAY=100\n' >> "$CM_HOME/.env"
+cp "$CM_HOME/logs/usage.tsv" "$WORK/usage-before-month.tsv"
+LASTMONTH="$("$PY" -c 'import datetime as d; t = d.date.today().replace(day=1) - d.timedelta(days=1); print(t.strftime("%Y-%m-%dT10:00"))')"
+awk -F'\t' '$13 != "runpod"' "$CM_HOME/logs/usage.tsv" > "$WORK/u" && mv "$WORK/u" "$CM_HOME/logs/usage.tsv"
+{ printf '%s\tgfx\t-\trender\tNVIDIA A40\t600\tn/a\tn/a\tn/a\tn/a\t0\tn/a\trunpod\t11000\t12.5000\n' "$NOW"
+  printf '%s\tother\t-\trender\tNVIDIA A40\t600\tn/a\tn/a\tn/a\tn/a\t0\tn/a\trunpod\t11000\t100.0000\n' "$LASTMONTH"; } >> "$CM_HOME/logs/usage.tsv"
+scenario; : > "$RP/requests.log"
+run gpus gfx
+check "gpus shows this month's spend against the monthly cap (last month's not counted)" has "This month's GPU spend: 12.50 of 15 USD"
+check "at 80% of the monthly cap it warns (MONTHLY_CAP_NEAR)" has "MONTHLY_CAP_NEAR: 12.50 of 15 USD"
+run gpu gfx --gpu "NVIDIA A40" --dry-run render
+check "gpu warns near the monthly cap too, and a pod that fits is still possible" \
+  bash -c "printf '%s' \"\$1\" | grep MONTHLY_CAP_NEAR >/dev/null && printf '%s' \"\$1\" | grep 'WOULD_CREATE: NVIDIA A40' >/dev/null" _ "$OUT"
+printf '%s\tgfx\t-\trender\tNVIDIA A40\t600\tn/a\tn/a\tn/a\tn/a\t0\tn/a\trunpod\t11000\t2.3000\n' "$NOW" >> "$CM_HOME/logs/usage.tsv"
+run gpu gfx --gpu "NVIDIA A40" --approved render
+check "a pod whose worst case passes this month's cap is refused (MONTHLY_CAP_REACHED)" has "MONTHLY_CAP_REACHED"
+OUT="$(RUNPOD_MAX_USD_PER_MONTH=500 cm gpu gfx --gpu "NVIDIA A40" --approved render)"; printf '%s\n' "$OUT" >> "$ALL_OUT"
+check "the monthly cap cannot be raised from the environment" has "MONTHLY_CAP_REACHED"
+check "...and nothing was created" test "$(posts)" = 0
+run usage --month
+check "usage --month lists this month's GPU spend by project, without last month's" \
+  bash -c "printf '%s\n' \"\$1\" | grep -E '^gfx +2 +14\.80 USD' >/dev/null && ! printf '%s\n' \"\$1\" | grep '^other' >/dev/null" _ "$OUT"
+run usage
+check "usage shows the month's GPU spend next to the day's" has "this month,"
+cp "$WORK/usage-before-month.tsv" "$CM_HOME/logs/usage.tsv"
+sed -e '/^RUNPOD_MAX_USD_PER_MONTH=15$/d' -e '/^RUNPOD_MAX_USD_PER_DAY=100$/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
 
 echo "== usage and status with GPU pods"
 run usage gfx

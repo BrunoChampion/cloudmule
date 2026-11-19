@@ -133,7 +133,7 @@ A new module `remote/modules/gpu-graphics.sh` (Ubuntu, x86), installed before th
   file. As a fallback only when `libGLX_nvidia.so.0` is missing: extract the same driver version's user-space
   libraries from NVIDIA's `.run` (`sh NVIDIA-Linux-x86_64-<ver>.run -x`), never a different version.
 - Google Chrome stable (`.deb`) through the existing `chrome-libs` module plus the browser itself.
-- **Chrome flags that use the GPU:** `--headless=new --no-sandbox --use-angle=vulkan --enable-features=Vulkan
+- **Chrome flags that use the GPU** (superseded by spec 0005: ANGLE over GL/EGL by default, Vulkan only on request): `--headless=new --no-sandbox --use-angle=vulkan --enable-features=Vulkan
   --disable-vulkan-surface --ignore-gpu-blocklist`. The job must check that the WebGL renderer
   (`WEBGL_debug_renderer_info` → `UNMASKED_RENDERER_WEBGL`) contains `NVIDIA` and **fail** if it says SwiftShader:
   a silent software fallback is 100× slower and would burn the time cap.
@@ -201,12 +201,18 @@ RUNPOD_STANDING_APPROVAL=0      # 1 = the agent may create GPU pods without aski
   |---|---|---|
   | Laptop, Intel Iris Xe | 0.58 | ~11 min |
   | CPU only (SwiftShader) | 12.2 | ~4 h |
-  | **RunPod A40 SECURE, $0.59/h, 1 Chrome** | **0.03** | **~0.5 min** |
-  | RunPod A40, 4 Chrome in parallel | 0.15 | ~0.8 min (slower: they fight for the GPU) |
+  | ~~RunPod A40 SECURE, $0.59/h, 1 Chrome~~ | ~~0.03~~ | ~~~0.5 min~~ |
+  | ~~RunPod A40, 4 Chrome in parallel~~ | ~~0.15~~ | ~~~0.8 min (slower: they fight for the GPU)~~ |
+  | **RunPod A40, ANGLE over GL/EGL, 1 Chrome (corrected, spec 0005)** | **0.19** | **~3.7 min** |
 
-  So **one Chrome per pod**. Pod creation to SSH: 24–35 s; installing Chrome + Node + Vulkan: ~80–100 s.
-  A 10-minute video (~18 000 frames) ≈ 9 min of render + ~2 min setup ≈ **$0.11**. Not yet measured: the full
-  render with audio mixing and MP4 encoding, and upload/download times.
+  **Correction (spec 0005, 2026-11-18/19):** the 0.03 s/frame rows were a **broken** render. With ANGLE over Vulkan,
+  Chrome lost the page's WebGL context while it loaded; three.js went on without its canvas textures and environment
+  map, and nothing failed. The same page on ANGLE over GL/EGL renders correctly (SSIM 0.995–0.996 against the laptop)
+  at 0.19 s/frame. "One Chrome per pod" came from that broken benchmark and is withdrawn: with GL, 6 Chromes in one
+  pod gave 4–4.7× the frames per second of one (spec 0005, Solution 9: fill one GPU with parallel tasks first).
+  Pod creation to SSH: 24–35 s that day, 47–120 s on 2026-11-19; installing Chrome + Node + Vulkan: ~80–100 s when
+  Ubuntu's mirror is fast (spec 0005 has the phase timings). Not yet measured then: the full render with audio
+  mixing and MP4 encoding, and upload/download times (measured in spec 0005).
 - **Availability is the real constraint.** Cheap GPUs (3090, A4000, A5000) were often `NONE` in both clouds; the
   catalog call avoids blind create attempts. On 2026-11-18 SECURE had A40 $0.59 (MEDIUM), RTX PRO 4000 Blackwell
   $0.57, L4 / A6000 $0.69 (LOW); COMMUNITY had 3090 $0.22 and 5080 $0.39 but no public SSH.

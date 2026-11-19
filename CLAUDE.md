@@ -47,8 +47,13 @@ Do it step by step, explaining each one in plain words, and stop at anything tha
   caps and today's spend; recommend one, wait for the user's yes, then `gpu … --approved --gpu <id> <job>`.
   `--approved` means the user said yes to this pod. Only with `RUNPOD_STANDING_APPROVAL=1` in `.env` may pods be
   created without asking, and the skill writes it **only when the user explicitly grants it** (with the caps they
-  give; reading them back and saying how to revoke). The caps in `.env` are enforced by cloudmule in every case and
-  cannot be raised from the environment. After each GPU job report GPU, USD/h, minutes and cost, then `status`.
+  give; reading them back and saying how to revoke). The caps in `.env` (USD/h, minutes per pod, USD per day, USD
+  per month, optional pods at once) are enforced by cloudmule in every case and cannot be raised from the
+  environment. Read the `RUNNING_PODS` lines `gpu` prints (other sessions' pods). After each GPU job report GPU,
+  USD/h, minutes, cost and the `GPU_USE` line, then `status`.
+- **A graphics render is not finished on `GPU_OK` alone** when the project has no `GPU_SELFTEST`: say so to the user.
+  `GPU_DEGRADED`/`GPU_TIME_CAP` results are downloaded for inspection only. Fill one GPU with parallel tasks
+  (`cloudmule-par`, slots chosen from `GPU_USE`) before proposing more pods or a pricier GPU (skill, section 5a).
 - **CPU-only work never goes to RunPod.** A project's `NEEDS_GPU` says what it needs; if it is not set and the
   task may need a GPU, ask the user (and offer to write the answer into `config.sh`).
 - **When done: `end <project> [target] --keep`, then `status`.** `end` releases your project's lease and only
@@ -95,9 +100,10 @@ Run from any folder: `bash <cloudmule-folder>/bin/cloudmule …` (the skill find
 | `oneshot <proj> [target] [--type t] [--location l] <job> [args…]` | One job: uses the server if it is on; otherwise creates it (`--type` required) and deletes it at the end if nobody else uses it (also on failure) | Yes, if it creates it |
 | `leases` | Who is using the server, since when, which jobs run | No |
 | `status` | Servers (billed hours), leases, snapshots and RunPod pods (id, GPU, USD/h, minutes up; a warning for pods that are not cloudmule's). Deletes cloudmule pods up longer than `RUNPOD_MAX_MINUTES` + 5 (`ORPHAN_DELETED`). RunPod first, so a Hetzner error cannot hide a pod. `RUNPOD_UNKNOWN` (and exit 1) when it could not check every pod: not all clear, look in the RunPod console | No |
-| `usage [proj] [target]` | Per project and job: runs, highest peak RAM, RAM wait (stalled for lack of memory), typical and highest cores used, longest run, GPU cost (USD and minutes of its pods), server types or GPUs (from `logs/usage.tsv`; works without a token). Then the GPU spend, total and today | No |
-| `gpus [proj] [target] [--cloud secure\|community\|all]` | The caps, today's GPU spend and what is left, the standing approval, then the GPUs RunPod has now: VRAM, cloud, USD/h, MAX/POD (worst case: USD/h × `RUNPOD_MAX_MINUTES`), availability, whether each fits (VRAM, NVIDIA, caps, SECURE: COMMUNITY pods have no public SSH; for `graphics` a whole GPU: MIG slices have no Vulkan/OpenGL; price 0 = not offered, left out) and why not. `Last choice:` (`logs/last-gpu`; its row is marked). Last line `RECOMMENDED: <gpu id> <cloud> <usd/h>`: the cheapest fitting GPU with MEDIUM/HIGH availability, else the cheapest fitting. `RUNPOD_FORBIDDEN` if the key lacks "catalog read". Deletes orphan pods like `status` | No |
-| `gpu <proj> [target] --gpu <id[,id…]> [--cloud secure] [--approved] [--dry-run] <job> [args…]` | One job on a RunPod GPU pod (steps in "How it works"), downloads its `CLOUDMULE_RESULT` paths, prints `GPU_OK: <job>`, and deletes the pod (also on failure): `GPU pod … deleted: <gpu>, <usd/h>, up <min>, about <usd>`. Refusals before anything is created: `NEEDS_GPU_CHOICE`, `NEEDS_APPROVAL`, `NEEDS_GPU_UNSET`, `NO_GPU_NEEDED`, `ABOVE_HOURLY_CAP`, `DAILY_CAP_REACHED`, `NO_GPU_AVAILABLE`, `NO_FITTING_GPU`; after creation (the pod is deleted at once): `NO_PUBLIC_SSH`, `GPU_NOT_USED`. `--dry-run`: `WOULD_CREATE: <gpu> <cloud> <usd/h> <max usd>` | **Yes** |
+| `usage [proj] [target] [--month\|--phases]` | Per project and job: runs, highest peak RAM, RAM wait (stalled for lack of memory), typical and highest cores used, longest run, GPU cost (USD and minutes of its pods), server types or GPUs (from `logs/usage.tsv`; works without a token). Then the GPU spend: total, this month, today. `--month`: this month's GPU spend by project; `--phases`: each GPU run's `PHASES` and `GPU_USE` | No |
+| `gpus [proj] [target] [--cloud secure\|community\|all] [--all]` | The caps, today's and this month's GPU spend and what is left (`MONTHLY_CAP_NEAR` at 80 %), the standing approval, then the GPUs RunPod has now that fit (`--all`: every offer and why not): VRAM, vCPU and RAM of its pods (catalog), cloud, USD/h, MAX/POD (worst case: USD/h × `RUNPOD_MAX_MINUTES`), availability, whether each fits (VRAM, NVIDIA, caps, SECURE: COMMUNITY pods have no public SSH; for `graphics` a whole GPU: MIG slices have no Vulkan/OpenGL; price 0 = not offered, left out) and why not. `Last choice:` (`logs/last-gpu`; its row is marked). Last line `RECOMMENDED: <gpu id> <cloud> <usd/h>`: the cheapest fitting GPU with MEDIUM/HIGH availability, else the cheapest fitting. `RUNPOD_FORBIDDEN` if the key lacks "catalog read". Writes the catalog cache (`logs/runpod-catalog.json`, 10 min) that `gpu` reads prices from. Deletes orphan pods like `status` | No |
+| `gpu <proj> [target] --gpu <id[,id…]> [--cloud secure] [--approved] [--max-minutes n] [--wait-for-pod m] [--dry-run] <job> [args…]` | One job on a RunPod GPU pod (steps in "How it works"): prints `RUNNING_PODS: <n>` and the cloudmule pods already running (any session or computer), downloads the job's `CLOUDMULE_RESULT` paths (also when it fails), prints `GPU_USE …` (GPU, VRAM, CPU of the pod's allotment, RAM) with a `GPU_USE_HINT`, `PHASES …`, and `GPU_OK: <job>`, or `GPU_DEGRADED: <reason>` / `GPU_TIME_CAP` (exit ≠ 0, results downloaded for inspection), `NEAR_TIME_CAP` when it ended within 15 % of its cap; deletes the pod (also on failure): `GPU pod … deleted: <gpu>, <usd/h>, up <min>, about <usd>`. `--max-minutes` lowers this pod's cap (never raises it); `--wait-for-pod` waits for a slot under `RUNPOD_MAX_PODS`. Refusals before anything is created: `NEEDS_GPU_CHOICE`, `NEEDS_APPROVAL`, `NEEDS_GPU_UNSET`, `NO_GPU_NEEDED`, `GPU_SELFTEST_MISSING`, `ABOVE_TIME_CAP`, `TOO_MANY_PODS`, `LAUNCH_LOCK_TIMEOUT`, `ABOVE_HOURLY_CAP`, `DAILY_CAP_REACHED`, `MONTHLY_CAP_REACHED`, `NO_GPU_AVAILABLE`, `NO_FITTING_GPU`; after creation (the pod is deleted at once): `NO_PUBLIC_SSH`, `GPU_NOT_USED`, `GPU_CONTEXT_LOST`, `GPU_SELFTEST_FAILED`. `--dry-run`: `WOULD_CREATE: <gpu> <cloud> <usd/h> <max usd>` | **Yes** |
+| `gpu-logs [<run tag>\|<pod id>] [-f]` | A running pod's job log (its tail) and its GPU/VRAM/CPU/RAM use now (`NOW …`); `-f` follows it. This computer's newest running pod by default (its SSH key stays here until the pod is deleted) | No |
 
 `[target]` only exists for projects with `NEEDS_TARGET=1` (one sub-folder per piece of work, e.g. per video);
 on the server each target lives in `/root/work/<project>/<target>`.
@@ -124,8 +130,19 @@ on the server each target lives in `/root/work/<project>/<target>`.
   architecture comes from its modules (each module declares `# arch: x86 arm`; ffmpeg is x86 only). A project never
   picks the server type: the user does, for the shared server (an old `SERVER_TYPES` is ignored with a note).
 - `NEEDS_GPU` (`0`, `graphics`, `cuda`; not set = the project has not said: ask the user), `MIN_VRAM_GB`
-  (default 8) and optional `RUNPOD_IMAGE` (default `runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04`) are
-  for GPU pods. On a pod, `MIN_DISK_GB` is the pod's disk (default 30) and `ONESHOT_EXCLUDE` applies.
+  (default 8) and optional `RUNPOD_IMAGE` (default `runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04`; for
+  `graphics`, `RUNPOD_IMAGE_GRAPHICS_DEFAULT` in `bin/lib.sh`: the prebuilt image once published) are for GPU pods.
+  On a pod, `MIN_DISK_GB` is the pod's disk (default 30) and `ONESHOT_EXCLUDE` applies.
+- `GPU_SELFTEST=<job>`: a job that must pass on the pod after the upload and before the real job (same arguments);
+  for any project whose output is pictures (a few frames compared with local ones). `GPU_GRAPHICS_BACKEND`
+  (`gl-egl` default, `vulkan` only if the page survives the context-loss check).
+- `.cloudmule/files/` (optional) is uploaded to `$REMOTE_DIR/.cloudmule-files` (`$CLOUDMULE_FILES`): helpers the jobs
+  `source`, reference data. The rest of `.cloudmule/` is never uploaded.
+- Jobs on a pod get `CLOUDMULE_CPUS`/`CLOUDMULE_RAM_GB` (the pod's cgroup allotment: size threads and slots from
+  them, never `nproc`), `CLOUDMULE_DEADLINE` (epoch s; stop cleanly before it), and for graphics
+  `CLOUDMULE_CHROME_GPU_FLAGS`, `CLOUDMULE_CHROME_ANGLE`, `CLOUDMULE_CHROME_LOG` (tee Chrome's output there).
+  `cloudmule-par --slots N tasks.txt` runs a job's independent tasks N at a time (one log, `CLOUDMULE_TASK`,
+  `CLOUDMULE_TASK_TMP` each; `TASK …` and `PAR …` lines).
 
 ## How it works
 
@@ -175,15 +192,28 @@ the connection drops or the local process is killed, the job goes on: `attach`.
 `cloudmule-<project>[-<target>]-<job>-<run tag>` (6 random hex: a session's cleanup after a failed create never
 matches another session's pod) and its own time cap in its env (`CLOUDMULE_MAX_MINUTES`: orphan checks on any
 computer use the pod's cap, not their own), with a throwaway SSH key in `keys/pod-<run>` (deleted with it) and
-`NVIDIA_DRIVER_CAPABILITIES=all`. Steps: refusals (none creates anything) → the local watchdog → create the first
-candidate that fits (unavailable ones are skipped; one billed above a cap is deleted at once) → wait for public SSH
-→ start the in-pod guard → install `chrome-libs gpu-graphics` (graphics) and `MODULES` → `cloudmule-webgl-check`
-(graphics) → `server-setup.sh` → upload (`SYNC_EXCLUDE` + `ONESHOT_EXCLUDE`) → dependencies → the job → its
-results → delete. A project whose `NEEDS_GPU` is not set is refused (`NEEDS_GPU_UNSET`): the pod could not know
+`NVIDIA_DRIVER_CAPABILITIES=all`. Steps: refusals (none creates anything) → the launch lock (`logs/runpod-launch.lock`:
+this computer's launches one at a time from the budget check until the pod exists; a dead holder's lock is removed;
+2 min at most) → the pods already running (`RUNNING_PODS`; `RUNPOD_MAX_PODS`) and the budget → the local watchdog
+→ create the first candidate that fits (price from the catalog cache; RunPod decides availability; one billed above a
+cap is deleted at once) → wait for public SSH → start the in-pod guard → the pod's allotment from its cgroup
+(`POD_CPUS`/`POD_RAM_GB`, else the catalog's) → install `base`, `chrome-libs gpu-graphics` (graphics) and `MODULES`:
+ONE apt pass for all of them (modules declare packages in `# apt:` headers; `lib/apt-pass.sh`, Ubuntu packages from
+`RUNPOD_APT_MIRROR`; download-only modules beside it), then each module's own steps → (graphics) the host's NVIDIA
+graphics libraries (`cloudmule-gpu-libs`), the backend's Chrome flags and `cloudmule-webgl-check` (8 s of a
+demanding WebGL2 page: renderer before/after, context loss, a canvas texture read back; `GPU_NOT_USED` /
+`GPU_CONTEXT_LOST`) → `server-setup.sh` → upload (`SYNC_EXCLUDE` + `ONESHOT_EXCLUDE`, and `.cloudmule/files/`) →
+dependencies → `GPU_SELFTEST` → the job, with the watcher (`remote/gpu-watch.sh`: GPU, VRAM, CPU against the
+cgroup quota, RAM every 2 s; for graphics also Chrome's log) → its results (also on failure) → `GPU_USE` → (graphics)
+`cloudmule-webgl-check --quick` → delete. At `CLOUDMULE_DEADLINE` (the cap − 5 min, or an eighth of a shorter cap)
+`gpu` stops the job (TERM to its process group, up to 60 s), downloads what it announced and ends `GPU_TIME_CAP`.
+Every run prints `PHASES` (also in `usage.tsv`). A project whose `NEEDS_GPU` is not set is refused (`NEEDS_GPU_UNSET`): the pod could not know
 whether to prepare Chrome and Vulkan. Caps in `.env`, enforced in code even when the user approves each pod, and
 read only from `.env`: `RUNPOD_MAX_USD_PER_HOUR` (no pod above it; one billed above it is deleted at once),
-`RUNPOD_MAX_MINUTES` (every pod is deleted after it), `RUNPOD_MAX_USD_PER_DAY` (today's spend from `usage.tsv` +
-the worst case of running pods + the new pod's worst case must stay below). **Three deletion layers:** the `gpu`
+`RUNPOD_MAX_MINUTES` (every pod is deleted after it; `--max-minutes` can only lower it for one run),
+`RUNPOD_MAX_USD_PER_DAY` and the optional `RUNPOD_MAX_USD_PER_MONTH` (the day's / calendar month's spend from
+`usage.tsv` + the worst case of running pods + the new pod's worst case must stay below), the optional
+`RUNPOD_MAX_PODS` (cloudmule pods running at once; unset = no limit). **Three deletion layers:** the `gpu`
 process's EXIT trap; a detached local watchdog (`rp-reap`, started before the pod is created) that deletes it after
 `RUNPOD_MAX_MINUTES`; and `remote/pod-guard.sh` inside the pod (started right after SSH answers), which deletes
 it with the pod's own credentials (`runpodctl remove pod $RUNPOD_POD_ID`, else the REST API with the pod-scoped
@@ -207,8 +237,14 @@ the server regenerates) are uploaded only when missing. Downloads use `scp`.
   RunPod's API with a local server in `tests/fake-runpod/`, and `ssh`/`scp` for pods in `tests/fake-ssh/`;
   GitHub Actions runs it on Linux and macOS). It must pass before every commit. Before a release, also follow
   `docs/e2e-checklist.md` with a real token (costs a few cents: ask first). Specs live in `docs/specs/`.
-- New module: `remote/modules/<name>.sh`, idempotent, pinned version, checksum verified, `apt-get update -q`
-  before apt installs. Versioned modules read `$VERSION` and install into `/opt/<name>/<version>`.
+- New module: `remote/modules/<name>.sh`, idempotent, pinned version, checksum verified. Its apt packages go in
+  `# apt:` header lines (`a|b` = whichever this Ubuntu has), installed by `lib/apt-pass.sh` (one `apt-get update`);
+  the script itself only does the rest. Versioned modules read `$VERSION` and install into `/opt/<name>/<version>`.
+  Helpers that are not modules live in `remote/modules/lib/`. After changing modules, rebuild the graphics image
+  (`tests/run.sh` checks `RUNPOD_IMAGE_GRAPHICS_SOURCE` once one is recorded): push the branch, run
+  `.github/workflows/gpu-image.yml` on it (pushing an image is outward-facing: the owner's yes), check the package is
+  public (an anonymous pull works: RunPod pulls without credentials), copy the job summary's two lines into
+  `bin/lib.sh`, run the tests, commit.
 
 ## Gotchas (lessons that cost time)
 
@@ -223,13 +259,23 @@ the server regenerates) are uploaded only when missing. Downloads use `scp`.
 - On Windows, stopping the shell task does not kill its process tree; Git Bash has no `pkill`/`pgrep` (use
   PowerShell `Get-CimInstance Win32_Process` + `Stop-Process` for a local tunnel).
 - `scp -r src dest/existing` puts the folder INSIDE the existing one: copy to the parent folder.
-- GPU rendering in Chrome (measured 2026-11-18, spec 0004): on a CPU server WebGL falls back to SwiftShader,
-  ~20× slower than a laptop's integrated GPU; a RunPod A40 rendered the same frame ~400× faster than SwiftShader
-  (0.03 s vs 12.2 s).
-  One Chrome per pod (several fight for the GPU). The NVIDIA Vulkan driver needs libglvnd (`libglvnd0`, `libgl1`,
-  `libegl1`): without them Chrome **silently** uses SwiftShader, hence `cloudmule-webgl-check`. Never install
-  `mesa-vulkan-drivers` (a software Vulkan driver) and never write the toolkit's read-only ICD file.
-- RunPod images are Ubuntu 22.04: modules must work there too (no `t64` package names only), and a tar made on
+- GPU rendering in Chrome (specs 0004 and 0005): on a CPU server WebGL falls back to SwiftShader, ~20× slower than a
+  laptop's integrated GPU (12.2 s/frame). On a RunPod A40 with ANGLE over GL/EGL a real three.js page renders at
+  **0.19 s/frame** (the laptop: 0.55). The "0.03 s/frame" measured first was a **broken** render: with ANGLE over
+  Vulkan, Chrome lost the WebGL context while the page loaded and three.js drew on without its canvas textures and
+  environment map, with no error. Hence GL by default, the demanding `cloudmule-webgl-check`, and `GPU_SELFTEST`.
+  Several Chromes in one pod are fine with GL (6 gave 4–4.7× the frames per second of one, GPU at 30 %): fill the
+  GPU with `cloudmule-par` before renting more. The NVIDIA drivers need libglvnd (`libglvnd0`, `libgl1`, `libegl1`):
+  without them Chrome **silently** uses SwiftShader. Never install `mesa-vulkan-drivers` (a software Vulkan driver)
+  and never write the toolkit's read-only ICD file.
+- Inside a RunPod container `nproc` and `/proc/cpuinfo` show the host (96 threads); the pod has its cgroup's quota
+  (`cpu.max`: 7.65 vCPUs on an A40, the catalog says 9). Measure and size from the cgroup (`CLOUDMULE_CPUS`).
+- Python's `urllib` tries a host's IPv6 addresses first, one connect timeout each: on a network whose IPv6 does not
+  answer, every RunPod API call took 42 s (2026-11-19). `bin/tools.py` sorts IPv4 first.
+- From RunPod's hosts `archive.ubuntu.com` sometimes crawls (33 kB/s on 2026-11-19: an `apt-get update` took 9–13
+  min) while other mirrors and Google's/Node's CDNs answer at MB/s: pods use `RUNPOD_APT_MIRROR`.
+- RunPod's PyTorch image is Ubuntu 22.04, `runpod/base` 24.04: modules must work on both (`a|b` package names in
+  `# apt:` headers for the `t64` renames), and a tar made on
   Windows needs `tar --no-same-owner` as root in a container. Cheap GPUs are often unavailable: `gpus` reads the
   catalog's availability first.
 - A helper taking optional arguments under `set -u` must read them as `${3:-}`: a missing one once crashed a

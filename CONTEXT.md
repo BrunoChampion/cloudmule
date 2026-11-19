@@ -35,3 +35,23 @@ _Avoid_: GPU server, instance, worker
 **Standing approval**:
 The user's explicit permission, recorded in cloudmule's `.env`, to create GPU pods without asking each time, always within the caps there.
 _Avoid_: auto-approve, consent
+
+**Context loss**:
+The browser dropping a page's WebGL context (a GPU-process reset); three.js then draws on without its canvas textures and environment map, so the pictures come out wrong with no error. cloudmule's WebGL check and watcher look for it.
+_Avoid_: GPU crash, black frames
+
+**GPU self-test**:
+A job the project names (`GPU_SELFTEST`) that must pass on the pod after the upload and before the real job, e.g. a few frames compared with frames rendered locally; only the project knows what a correct picture looks like.
+_Avoid_: smoke test, validation job
+
+**Phase timings**:
+How long each step of a GPU run took (catalog, create, boot to SSH, modules, WebGL check, upload, self-test, job, download, delete), printed as one `PHASES` line and kept in `usage.tsv`.
+_Avoid_: profile, trace
+
+**Task**:
+One independent piece of a job (a chapter or frame range, a file, a batch, a seed, a test shard, a prompt) that can run at the same time as the others on one machine.
+_Avoid_: subjob, worker, chunk
+
+**Slots**:
+How many of a job's tasks run at once inside one pod (`cloudmule-par --slots N`); chosen from the run's measured GPU, VRAM, CPU and RAM use, to fill one GPU before renting another.
+_Avoid_: workers, threads, parallelism
