@@ -544,14 +544,15 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     fi
     [ -z "$WAIT_FOR_POD" ] || [[ "$WAIT_FOR_POD" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
       || die "--wait-for-pod must be a number of minutes (not '$WAIT_FOR_POD')"
-    # one launch at a time on this computer, from the budget check until the pod exists
-    launch_lock; trap launch_unlock EXIT
+    # one launch at a time on this computer, from the budget check until the pod exists (--dry-run creates nothing:
+    # no lock, no pod cap, no waiting)
+    [ "$DRY_RUN" = 1 ] || { launch_lock; trap launch_unlock EXIT; }
     wait_until=$(( $(date +%s) + $(seconds_of "${WAIT_FOR_POD:-0}") ))
     while :; do
       gpu_budget
       echo "RUNNING_PODS: $RUNNING_COUNT (cloudmule pods running now, from every project, session and computer)"
       [ -z "$RUNNING_LINES" ] || printf '%s\n' "$RUNNING_LINES"
-      if [ -n "$RUNPOD_MAX_PODS" ] && [ "$RUNNING_COUNT" -ge "$RUNPOD_MAX_PODS" ]; then
+      if [ "$DRY_RUN" = 0 ] && [ -n "$RUNPOD_MAX_PODS" ] && [ "$RUNNING_COUNT" -ge "$RUNPOD_MAX_PODS" ]; then
         if [ "$(date +%s)" -lt "$wait_until" ]; then
           echo "(RUNPOD_MAX_PODS=$RUNPOD_MAX_PODS: waiting for a free pod slot, up to $WAIT_FOR_POD min)"
           launch_unlock; sleep "${CM_WAIT_POD_POLL:-30}"; launch_lock; continue
@@ -603,6 +604,7 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     boot_left=$(( RUNPOD_BOOT_SECONDS - ( $(date +%s) - POD_T0 ) )); [ "$boot_left" -ge 10 ] || boot_left=10
     wait_ssh "$boot_left" || die "NO_PUBLIC_SSH: the GPU pod did not answer over SSH"
     pod_guard
+    pod_deadline   # from here on, every remote step stops at CLOUDMULE_DEADLINE (the setup too)
     pod_allotment
     phase ssh
     MODULES="$(gpu_modules)"
@@ -617,8 +619,8 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     SYNC_EXCLUDE="$SYNC_EXCLUDE ${ONESHOT_EXCLUDE:-}"
     server_setup; echo "== Syncing $PROJECT ${TARGET:-} =="; sync_project; install_project   # (modules: done above)
     phase sync
-    pod_deadline
-    if [ -n "$GPU_SELFTEST" ]; then   # the project's own check (e.g. a few frames against local references)
+    # the project's own check (e.g. a few frames against local references); not when the job IS the self-test
+    if [ -n "$GPU_SELFTEST" ] && [ "$GPU_SELFTEST" != "$1" ]; then
       echo "== GPU self-test: $GPU_SELFTEST =="
       if ! run_job "$GPU_SELFTEST" "${@:2}"; then
         phase selftest
@@ -644,7 +646,7 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
       if [ $(( POD_DEADLINE - $(date +%s) )) -ge 90 ]; then
         webgl_check --quick || DEGRADED="post-check failed${DEGRADED:+; $DEGRADED}"
       else
-        pod_note "(post-check skipped: the job ended less than 90 s before the deadline)"
+        DEGRADED="post-check skipped (the job ended less than 90 s before the deadline)${DEGRADED:+; $DEGRADED}"
       fi
     fi
     phase postcheck

@@ -66,6 +66,6 @@ case "$cmd" in
                                  e="$(exit_of "$cmd")"; [ "$e" = running ] && e=143
                                  echo "EXIT $e" ;;
   *".usage.prev "*)              echo "start=1000 end=1090 exit=0 peak_bytes=2147483648 cpu_usec=45000000 stall_usec=0 type= vcpus=16 mem_kb=65000000" ;;
-  *"cat > "*|*"tar "*"xf"*|*"xargs "*) cat > /dev/null ;;   # uploads: swallow what is sent
+  *"cat > "*|*"tar --no-same-owner -xf"*|*"xargs -d"*) cat > /dev/null ;;   # uploads: swallow what is sent (exact commands: a package list may contain "tar … xf")
 esac
 exit 0

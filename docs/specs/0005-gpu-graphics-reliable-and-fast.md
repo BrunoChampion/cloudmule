@@ -1,6 +1,6 @@
 # Spec 0005 — GPU pods that work correctly, say so, start fast, and are used fully
 
-Status: agreed with the owner 2026-11-18 (all open questions decided); implemented and e2e-verified 2026-11-19, prebuilt image published; e2e 1-3 done (see Further Notes) · Scope: the cloudmule
+Status: agreed with the owner 2026-11-18 (all open questions decided); implemented and e2e-verified 2026-11-19, prebuilt image published; e2e 1-3 done (see Further Notes). Targets accepted as measured by the owner; improvements and problems for later: `0005-followups.md` · Scope: the cloudmule
 repository only (project-side follow-ups are listed under Further Notes, not specified here).
 Builds on: spec 0004 (RunPod GPU pods). Vocabulary: see `CONTEXT.md`. New terms: **context loss**, **GPU self-test**,
 **phase timings**, **task**, **slots** (defined below; add them to `CONTEXT.md`).
@@ -680,11 +680,19 @@ All decided by the owner on 2026-11-18; kept here as the record.
     L40S pod lost 787 s of apt the same hour. Pods now take Ubuntu's packages from `RUNPOD_APT_MIRROR`
     (`https://mirrors.edge.kernel.org/ubuntu`, falling back to the image's sources): modules 125 s (apt 63 s) on the
     next pod. The remaining ~17 s per module was cloudmule's own 20 s polling, now 2 s doubling up to 20.
+  - **Against "Target after (a): command → job start ≤ 3 min": missed.** In the (a) run the steps before the job took
+    ~486 s (443 s without the self-test), 332 s of them modules on a crawling Ubuntu mirror. After the mirror fix only
+    the modules were measured again (125 s, from which ~3.5–4 min before the job can be estimated); no full e2e 1 was
+    repeated before step (b) replaced the installs. Step (b) is what reached the target range.
   - **Boot to SSH by image:** `runpod/pytorch:2.1.0…` 47 and 59 s; `runpod/base:1.6.0-ubuntu2404` (0.7 GB) 82 and
     120 s, probably not cached on RunPod's hosts. So the "lighter graphics image" of step (a) did not pay off; the
     graphics default stays the PyTorch image until the prebuilt image (step b) is published.
   - **`POST /pods` and more vCPUs per GPU:** not tried (no field was sent to RunPod's API without knowing its price
     effect); still open.
+  - **e2e 2 used a synthetic load**, not the Short Form long video's chapters: a parallel job over those chapters is
+    that project's own `render-long.sh --parallel`, which this implementation was not allowed to change, and its
+    chapter render costs ~0.36 USD per pod (the day's shared cap was nearly used). The expected "near-linear gain up
+    to 6" was therefore measured on a GPU-bound load, not on the CPU-bound render.
   - **e2e 2** (pod `r6p8gfqsjdsnbe`, 7.3 min, ~0.072 USD, `--max-minutes 25`): 6 equal tasks of a synthetic WebGL load
     (`cloudmule-webgl-check --frames 9000`) with `cloudmule-par` at 1 / 3 / 6 slots in one pod: 110 / 41 / 30 s
     (1× / 2.7× / 3.7×), GPU mean 31 / 55 / 78 % (max 41 / 79 / 100 %), CPU 8 / 26 / 57 % of 7.65 vCPUs, VRAM 0.9 / 1.9 /

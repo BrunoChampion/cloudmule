@@ -560,7 +560,8 @@ check "...and the pod is deleted" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/requ
 scenario; rm -f "$FAKE_SSH_STATE"/*
 gpu_env CM_POLL_SECONDS=1 FAKE_SSH_NEAR=render
 check "a run that ends near its time cap says so (NEAR_TIME_CAP)" has "NEAR_TIME_CAP:"
-check "...and is still GPU_OK" has "GPU_OK: render"
+check "...and, with no time left for the WebGL check after the job, it is not GPU_OK" \
+  bash -c "printf '%s' \"\$1\" | grep 'GPU_DEGRADED: post-check skipped' >/dev/null && ! printf '%s' \"\$1\" | grep 'GPU_OK' >/dev/null" _ "$OUT"
 sed '/^RUNPOD_MAX_MINUTES=0.5$/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
 
 echo "== phase timings, one apt pass, catalog cache (spec 0005, step a)"
@@ -670,6 +671,8 @@ check "...nothing is created" test "$(posts)" = 0
 check "...and it fails" test "$RC" != 0
 OUT="$(RUNPOD_MAX_PODS=9 PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved render)"
 check "RUNPOD_MAX_PODS cannot be raised from the environment" has "TOO_MANY_PODS"
+scenario "{\"pods\": [$RUNNING_POD]}"; run gpu gfx --gpu "NVIDIA A40" --dry-run render
+check "--dry-run creates nothing, so the pod cap does not stop it" has "WOULD_CREATE: NVIDIA A40"
 scenario "{\"pods\": [$RUNNING_POD]}"; : > "$RP/requests.log"
 ( sleep 3; scenario ) & SWAP=$!
 OUT="$(CM_WAIT_POD_POLL=1 PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved --wait-for-pod 1 render)"; RC=$?
@@ -705,11 +708,11 @@ check "two launches at once that together pass the daily cap: exactly one is ref
 sed '/^RUNPOD_MAX_USD_PER_DAY=0.60$/d' "$CM_HOME/.env" > "$WORK/env" && mv "$WORK/env" "$CM_HOME/.env"
 bash -c 'exit 0' & DEAD=$!; wait "$DEAD"   # a pid that just ended
 mkdir -p "$CM_HOME/logs/runpod-launch.lock"; echo "$DEAD" > "$CM_HOME/logs/runpod-launch.lock/pid"
-scenario; run gpu gfx --gpu "NVIDIA A40" --dry-run render
-check "a launch lock left by a dead process is removed" bash -c "printf '%s\n' \"\$1\" | grep 'stale launch lock' >/dev/null && printf '%s\n' \"\$1\" | grep WOULD_CREATE >/dev/null" _ "$OUT"
+scenario; gpu_run gfx --gpu "NVIDIA A40" --approved render
+check "a launch lock left by a dead process is removed" bash -c "printf '%s\n' \"\$1\" | grep 'stale launch lock' >/dev/null && printf '%s\n' \"\$1\" | grep 'GPU_OK: render' >/dev/null" _ "$OUT"
 sleep 30 & HOLDER=$!
 mkdir -p "$CM_HOME/logs/runpod-launch.lock"; echo "$HOLDER" > "$CM_HOME/logs/runpod-launch.lock/pid"
-OUT="$(CM_LAUNCH_LOCK_SECONDS=2 cm gpu gfx --gpu "NVIDIA A40" --dry-run render)"; RC=$?
+OUT="$(CM_LAUNCH_LOCK_SECONDS=2 PATH="$REPO/tests/fake-ssh:$PATH" cm gpu gfx --gpu "NVIDIA A40" --approved render)"; RC=$?
 kill "$HOLDER" 2>/dev/null; rm -rf "$CM_HOME/logs/runpod-launch.lock"
 check "a launch lock held too long by a live process: LAUNCH_LOCK_TIMEOUT" bash -c "printf '%s\n' \"\$1\" | grep LAUNCH_LOCK_TIMEOUT >/dev/null && [ $RC != 0 ]" _ "$OUT"
 

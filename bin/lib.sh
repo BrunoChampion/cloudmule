@@ -365,7 +365,8 @@ ensure_modules() {
     t0=$(date +%s)
     remote_job "$LEASE-modules-apt" /root "$(apt_pass_cmd "$pkgs" "$early")"
     MODULE_TIMES="apt=$(( $(date +%s) - t0 ))"
-    missing="$(rsh "for s in $missing; do test -f $R/mod/\$s || printf ' %s' \"\$s\"; done")"
+    missing="$(rsh "for s in $missing; do test -f $R/mod/\$s || printf ' %s' \"\$s\"; done; \
+      test -x /usr/local/bin/cloudmule-par || printf ' base'")"
   fi
   for spec in $missing; do
     m="${spec%%@*}"; v=""; [ "$spec" = "$m" ] || v="${spec#*@}"
@@ -494,13 +495,16 @@ stop_job() {   # (only while its wrapper, a bash, is alive: a reused pid is neve
 # STOP_GRACE seconds (60) to end; then the wait ends either way, with STOPPED_AT_DEADLINE=1.
 WAIT_DEADLINE=""; STOP_GRACE=60; STOPPED_AT_DEADLINE=0
 remote_wait() {
-  local name="$1" log="$R/jobs/$1.log" start last cap="${CM_POLL_SECONDS:-20}" every=2 termed=""
+  local name="$1" log="$R/jobs/$1.log" start last cap="${CM_POLL_SECONDS:-20}" every=2 termed="" lost=0
   [ "$every" -le "$cap" ] || every="$cap"
   rsh "test -f $log" || { echo "ERROR: there is no job '$name' on the server" >&2; return 1; }
   start=$(date +%s); last=""
   while true; do
     last="$(rsh "tail -c 4000 $log 2>/dev/null | tr '\r' '\n' | grep -v '^[[:space:]]*\$' | tail -1" 2>/dev/null || echo '(no connection, retrying)')"
     case "$last" in "EXIT "*) break ;; esac
+    # no answer 15 times in a row (the machine is gone, e.g. a pod deleted at its cap): stop waiting
+    case "$last" in "(no connection"*) lost=$((lost + 1)) ;; *) lost=0 ;; esac
+    [ "$lost" -lt 15 ] || { last="EXIT no answer from the machine (15 tries)"; break; }
     echo "[$name $(( ($(date +%s) - start) / 60 )) min] $last"
     if [ -n "$WAIT_DEADLINE" ] && [ -z "$termed" ] && [ "$(date +%s)" -ge "$WAIT_DEADLINE" ]; then
       echo "DEADLINE: the pod's time cap is near: stopping '$name' (TERM) and keeping what it has announced so far"
@@ -526,7 +530,8 @@ remote_wait() {
   if [ "$last" != "EXIT 0" ]; then
     echo "ERROR: '$name' failed ($last). Log: $LAST_LOG" >&2
     tail -20 "$LAST_LOG" >&2 || true
-    return 1
+    # the job's own exit code when it has one (143: stopped by TERM), else 1
+    case "${last#EXIT }" in ''|*[!0-9]*) return 1 ;; *) return "${last#EXIT }" ;; esac
   fi
   echo "[$name] done. Log: $LAST_LOG"
 }
@@ -614,6 +619,8 @@ themselves (see .env.example)."
   done
   [ -z "$RUNPOD_MAX_USD_PER_MONTH" ] || [[ "$RUNPOD_MAX_USD_PER_MONTH" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
     || die "RUNPOD_MAX_USD_PER_MONTH in $CM_DIR/.env must be a number, or empty for no monthly cap"
+  [ -z "$RUNPOD_MAX_USD_PER_MONTH" ] || [ "${USAGE_KEEP_DAYS%%.*}" -ge 31 ] 2>/dev/null \
+    || die "RUNPOD_MAX_USD_PER_MONTH needs USAGE_KEEP_DAYS >= 31 in $CM_DIR/.env (the month's spend is read from usage.tsv)"
   [ -z "$RUNPOD_APT_MIRROR" ] || [[ "$RUNPOD_APT_MIRROR" =~ ^https?://[A-Za-z0-9._/-]+$ ]] \
     || die "RUNPOD_APT_MIRROR must be an http(s) URL of an Ubuntu mirror (letters, digits, . _ / -), or empty"
   [ -z "$RUNPOD_MAX_PODS" ] || [[ "$RUNPOD_MAX_PODS" =~ ^[1-9][0-9]*$ ]] \
