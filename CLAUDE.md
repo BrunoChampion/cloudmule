@@ -241,8 +241,9 @@ the server regenerates) are uploaded only when missing. Downloads use `scp`.
   `# apt:` header lines (`a|b` = whichever this Ubuntu has), installed by `lib/apt-pass.sh` (one `apt-get update`);
   the script itself only does the rest. Versioned modules read `$VERSION` and install into `/opt/<name>/<version>`.
   Helpers that are not modules live in `remote/modules/lib/`. After changing modules, rebuild the graphics image
-  (`tests/run.sh` checks `RUNPOD_IMAGE_GRAPHICS_SOURCE` once one is recorded): push the branch, run
-  `.github/workflows/gpu-image.yml` on it (pushing an image is outward-facing: the owner's yes), check the package is
+  (`tests/run.sh` checks `RUNPOD_IMAGE_GRAPHICS_SOURCE` once one is recorded): push the branch and a tag
+  `gpu-image-<date>` on it, which runs `.github/workflows/gpu-image.yml` (pushing an image is outward-facing: the
+  owner's yes), check the package is
   public (an anonymous pull works: RunPod pulls without credentials), copy the job summary's two lines into
   `bin/lib.sh`, run the tests, commit.
 
