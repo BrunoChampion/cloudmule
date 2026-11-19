@@ -1,6 +1,6 @@
 # Spec 0005 — GPU pods that work correctly, say so, start fast, and are used fully
 
-Status: agreed with the owner 2026-11-18 (all open questions decided); phases 1–3 implemented and e2e-verified 2026-11-19, phase 4 (prebuilt image) built but not yet published (see Further Notes) · Scope: the cloudmule
+Status: agreed with the owner 2026-11-18 (all open questions decided); implemented and e2e-verified 2026-11-19, prebuilt image published (see Further Notes; e2e 3, cuda, not done) · Scope: the cloudmule
 repository only (project-side follow-ups are listed under Further Notes, not specified here).
 Builds on: spec 0004 (RunPod GPU pods). Vocabulary: see `CONTEXT.md`. New terms: **context loss**, **GPU self-test**,
 **phase timings**, **task**, **slots** (defined below; add them to `CONTEXT.md`).
@@ -690,8 +690,19 @@ All decided by the owner on 2026-11-18; kept here as the record.
     (1× / 2.7× / 3.7×), GPU mean 31 / 55 / 78 % (max 41 / 79 / 100 %), CPU 8 / 26 / 57 % of 7.65 vCPUs, VRAM 0.9 / 1.9 /
     3.7 GB. Near-linear to 3 slots, then the GPU fills: the slots rule's case "GPU near 85 %: keep N or +1". This load
     is GPU-bound; the real three.js renders are CPU-bound (see the L001 numbers above).
+  - **Step (b), the prebuilt image** (owner's yes 2026-11-19): built by `.github/workflows/gpu-image.yml` from the tag
+    `gpu-image-2026-11-19` (a `workflow_dispatch` needs the workflow on the default branch; a tag runs it from any
+    branch), 2 min on GitHub's runner; `ghcr.io/brunochampion/cloudmule-gpu-graphics@sha256:133b28e4…`, 1.14 GB
+    compressed (25 layers), public from the start (a package published with `GITHUB_TOKEN` from a public repository
+    takes the repository's visibility; an anonymous manifest pull answered 200). Source hash `f098a23bd0ee45cd`.
+  - **e2e 1 with the image** (pod `pxblv75xqkf0zh`, 6.8 min, ~0.067 USD): `PHASES budget=3 prep=0 catalog=0 create=3
+    ssh=36 modules=2 webgl=16 sync=20 selftest=42 job=270 pull=15 postcheck=9 delete=2`, `GPU_OK`, SSIM 0.9944 /
+    0.9951 / 0.9952, render 3.9 min. **Command → job start 80 s without the self-test (target ≤ 1.5 min), 122 s with
+    it; command → MP4 7.0 min** (target < 7 min; baseline 12.6). The first pod with the image (`o0fstfc6flwuf3`, 5.1
+    min, ~0.05 USD) never showed public SSH within 300 s: most likely the image's first pull on that host. The boot
+    allowance (`RUNPOD_BOOT_SECONDS`) is now 600 s.
   - **e2e 3 (cuda):** not done, no `cuda` project available.
-  - Cost of the implementation's own pods: about 0.60 USD (eight A40 pods, two of them diagnosis pods stopped in the
-    slow apt pass).
+  - Cost of the implementation's own pods: about 0.72 USD (ten A40 pods, two of them diagnosis pods stopped in the
+    slow apt pass, one that never showed SSH).
 - Written 2026-11-18 from a review between three Claude sessions of the Short Form project (two of them ran the pods
   above), at the owner's request, then extended the same day with the GPU-use and parallel measurements.

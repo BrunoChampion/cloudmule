@@ -37,7 +37,7 @@ MODULES="node@24.15.0"
 # NEEDS_GPU=graphics   # e.g. "renders three.js frames in headless Chrome"
 # MIN_VRAM_GB=8        # GPU memory the work needs (default 8)
 # RUNPOD_IMAGE=runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04   # the pod's image (SSH ready). Defaults:
-#                             # graphics: cloudmule's prebuilt image (Chrome, Node, ffmpeg) once published
+#                             # graphics: cloudmule's prebuilt image (Chrome, Node, ffmpeg)
 # On a pod, MIN_DISK_GB is the pod's disk (default 30 GB there).
 # GPU_SELFTEST=gpu-selftest   # a job (jobs/<name>.sh) that must pass on the pod before the real job, with the same
 #                             # arguments: e.g. render 3-4 frames and compare them (SSIM) with frames rendered locally.

@@ -131,7 +131,7 @@ on the server each target lives in `/root/work/<project>/<target>`.
   picks the server type: the user does, for the shared server (an old `SERVER_TYPES` is ignored with a note).
 - `NEEDS_GPU` (`0`, `graphics`, `cuda`; not set = the project has not said: ask the user), `MIN_VRAM_GB`
   (default 8) and optional `RUNPOD_IMAGE` (default `runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04`; for
-  `graphics`, `RUNPOD_IMAGE_GRAPHICS_DEFAULT` in `bin/lib.sh`: the prebuilt image once published) are for GPU pods.
+  `graphics`, `RUNPOD_IMAGE_GRAPHICS_DEFAULT` in `bin/lib.sh`: cloudmule's prebuilt image, `images/gpu-graphics`) are for GPU pods.
   On a pod, `MIN_DISK_GB` is the pod's disk (default 30) and `ONESHOT_EXCLUDE` applies.
 - `GPU_SELFTEST=<job>`: a job that must pass on the pod after the upload and before the real job (same arguments);
   for any project whose output is pictures (a few frames compared with local ones). `GPU_GRAPHICS_BACKEND`

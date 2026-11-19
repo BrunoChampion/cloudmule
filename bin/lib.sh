@@ -54,16 +54,16 @@ RUNPOD_STANDING_APPROVAL=${RUNPOD_STANDING_APPROVAL:-0}    # 1 = GPU pods may be
 # Ubuntu's packages on GPU pods come from this official mirror (empty = the image's own sources): archive.ubuntu.com
 # answered RunPod's hosts at 33 kB/s on 2026-11-19 (an apt update took 9-13 min); same packages, signed by Ubuntu
 RUNPOD_APT_MIRROR=${RUNPOD_APT_MIRROR-https://mirrors.edge.kernel.org/ubuntu}
-RUNPOD_BOOT_SECONDS=${RUNPOD_BOOT_SECONDS:-300}            # no public SSH after this long: NO_PUBLIC_SSH, deleted
+RUNPOD_BOOT_SECONDS=${RUNPOD_BOOT_SECONDS:-600}            # no public SSH after this long: NO_PUBLIC_SSH, deleted (a first pull of an image on a host can take minutes)
 RUNPOD_POLL_SECONDS=${RUNPOD_POLL_SECONDS:-10}
 RUNPOD_IMAGE_DEFAULT="runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04"   # cuda: SSH preconfigured, CUDA 11.8
-# graphics: the prebuilt image (images/gpu-graphics) once it is published; until then the same image as cuda.
+# graphics: the prebuilt image (images/gpu-graphics: Chrome, GL/EGL, Node 24.15.0, ffmpeg; pods skip those installs).
 # Measured 2026-11-19 on A40 pods, boot to SSH: runpod/pytorch 47 and 59 s, the smaller runpod/base:1.6.0-ubuntu2404
 # 82 and 120 s (probably not cached on RunPod's hosts), and the module installs took as long on both.
-RUNPOD_IMAGE_GRAPHICS_DEFAULT="$RUNPOD_IMAGE_DEFAULT"
+RUNPOD_IMAGE_GRAPHICS_DEFAULT="ghcr.io/brunochampion/cloudmule-gpu-graphics@sha256:133b28e4d0db180a29aafe6d5de4a0e1b7cdcbaaeb7f13d1a71418b5cd578e9a"   # gpu-image-2026-11-19
 # with a prebuilt image: the hash of what it was built from (images/gpu-graphics/modules-hash.py), from the build's
 # job summary. tests/run.sh fails when remote/modules or images/gpu-graphics changed since: rebuild the image.
-RUNPOD_IMAGE_GRAPHICS_SOURCE=""
+RUNPOD_IMAGE_GRAPHICS_SOURCE="f098a23bd0ee45cd"
 POD_RECORDS="$CM_DIR/logs/runpod"                        # one record per GPU pod this computer created, until it is deleted
 LAST_GPU_FILE="$CM_DIR/logs/last-gpu"             # the user's last GPU choice: gpu, cloud, project, date (tabs)
 USAGE_SINK=""                                     # set only by `gpu` (see usage_sink)
