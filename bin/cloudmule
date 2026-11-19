@@ -599,7 +599,9 @@ Use --name <other-name>, or delete $REGISTRY/$NAME if that folder no longer exis
     addr="$(rp_tools rp-wait "$POD_ID" --timeout "$RUNPOD_BOOT_SECONDS" --interval "$RUNPOD_POLL_SECONDS")"
     pod_ssh $addr
     printf '%s\n' "$addr" > "$POD_KEY.addr"   # for `cloudmule gpu-logs` while the job runs
-    wait_ssh "$RUNPOD_BOOT_SECONDS" || die "NO_PUBLIC_SSH: the GPU pod did not answer over SSH"
+    # one boot allowance from the pod's creation, shared by the wait for its port and for its sshd
+    boot_left=$(( RUNPOD_BOOT_SECONDS - ( $(date +%s) - POD_T0 ) )); [ "$boot_left" -ge 10 ] || boot_left=10
+    wait_ssh "$boot_left" || die "NO_PUBLIC_SSH: the GPU pod did not answer over SSH"
     pod_guard
     pod_allotment
     phase ssh

@@ -54,12 +54,11 @@ RUNPOD_STANDING_APPROVAL=${RUNPOD_STANDING_APPROVAL:-0}    # 1 = GPU pods may be
 # Ubuntu's packages on GPU pods come from this official mirror (empty = the image's own sources): archive.ubuntu.com
 # answered RunPod's hosts at 33 kB/s on 2026-11-19 (an apt update took 9-13 min); same packages, signed by Ubuntu
 RUNPOD_APT_MIRROR=${RUNPOD_APT_MIRROR-https://mirrors.edge.kernel.org/ubuntu}
-RUNPOD_BOOT_SECONDS=${RUNPOD_BOOT_SECONDS:-600}            # no public SSH after this long: NO_PUBLIC_SSH, deleted (a first pull of an image on a host can take minutes)
+RUNPOD_BOOT_SECONDS=${RUNPOD_BOOT_SECONDS:-600}            # from creation, no SSH after this long: NO_PUBLIC_SSH, deleted (an image's first pull on a host can take minutes)
 RUNPOD_POLL_SECONDS=${RUNPOD_POLL_SECONDS:-10}
 RUNPOD_IMAGE_DEFAULT="runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04"   # cuda: SSH preconfigured, CUDA 11.8
 # graphics: the prebuilt image (images/gpu-graphics: Chrome, GL/EGL, Node 24.15.0, ffmpeg; pods skip those installs).
-# Measured 2026-11-19 on A40 pods, boot to SSH: runpod/pytorch 47 and 59 s, the smaller runpod/base:1.6.0-ubuntu2404
-# 82 and 120 s (probably not cached on RunPod's hosts), and the module installs took as long on both.
+# Measured 2026-11-19 on an A40: SSH after 36 s, modules 2 s (from the PyTorch image: ~45-60 s and 2-5 min of installs).
 RUNPOD_IMAGE_GRAPHICS_DEFAULT="ghcr.io/brunochampion/cloudmule-gpu-graphics@sha256:133b28e4d0db180a29aafe6d5de4a0e1b7cdcbaaeb7f13d1a71418b5cd578e9a"   # gpu-image-2026-11-19
 # with a prebuilt image: the hash of what it was built from (images/gpu-graphics/modules-hash.py), from the build's
 # job summary. tests/run.sh fails when remote/modules or images/gpu-graphics changed since: rebuild the image.

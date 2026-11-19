@@ -260,6 +260,9 @@ the server regenerates) are uploaded only when missing. Downloads use `scp`.
 - On Windows, stopping the shell task does not kill its process tree; Git Bash has no `pkill`/`pgrep` (use
   PowerShell `Get-CimInstance Win32_Process` + `Stop-Process` for a local tunnel).
 - `scp -r src dest/existing` puts the folder INSIDE the existing one: copy to the parent folder.
+- Never edit `bin/cloudmule` while a cloudmule command runs (another session's `gpu`, a test): bash reads a script as
+  it executes it, and the running command fails at its end (`unexpected EOF`, exit 2). `bin/lib.sh` is read whole
+  when sourced; `bin/tools.py` is started anew by every call, so a change there reaches running commands too.
 - GPU rendering in Chrome (specs 0004 and 0005): on a CPU server WebGL falls back to SwiftShader, ~20× slower than a
   laptop's integrated GPU (12.2 s/frame). On a RunPod A40 with ANGLE over GL/EGL a real three.js page renders at
   **0.19 s/frame** (the laptop: 0.55). The "0.03 s/frame" measured first was a **broken** render: with ANGLE over

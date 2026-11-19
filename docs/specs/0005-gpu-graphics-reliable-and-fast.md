@@ -1,6 +1,6 @@
 # Spec 0005 — GPU pods that work correctly, say so, start fast, and are used fully
 
-Status: agreed with the owner 2026-11-18 (all open questions decided); implemented and e2e-verified 2026-11-19, prebuilt image published (see Further Notes; e2e 3, cuda, not done) · Scope: the cloudmule
+Status: agreed with the owner 2026-11-18 (all open questions decided); implemented and e2e-verified 2026-11-19, prebuilt image published; e2e 1-3 done (see Further Notes) · Scope: the cloudmule
 repository only (project-side follow-ups are listed under Further Notes, not specified here).
 Builds on: spec 0004 (RunPod GPU pods). Vocabulary: see `CONTEXT.md`. New terms: **context loss**, **GPU self-test**,
 **phase timings**, **task**, **slots** (defined below; add them to `CONTEXT.md`).
@@ -697,12 +697,20 @@ All decided by the owner on 2026-11-18; kept here as the record.
     takes the repository's visibility; an anonymous manifest pull answered 200). Source hash `f098a23bd0ee45cd`.
   - **e2e 1 with the image** (pod `pxblv75xqkf0zh`, 6.8 min, ~0.067 USD): `PHASES budget=3 prep=0 catalog=0 create=3
     ssh=36 modules=2 webgl=16 sync=20 selftest=42 job=270 pull=15 postcheck=9 delete=2`, `GPU_OK`, SSIM 0.9944 /
-    0.9951 / 0.9952, render 3.9 min. **Command → job start 80 s without the self-test (target ≤ 1.5 min), 122 s with
-    it; command → MP4 7.0 min** (target < 7 min; baseline 12.6). The first pod with the image (`o0fstfc6flwuf3`, 5.1
-    min, ~0.05 USD) never showed public SSH within 300 s: most likely the image's first pull on that host. The boot
-    allowance (`RUNPOD_BOOT_SECONDS`) is now 600 s.
-  - **e2e 3 (cuda):** not done, no `cuda` project available.
-  - Cost of the implementation's own pods: about 0.72 USD (ten A40 pods, two of them diagnosis pods stopped in the
+    0.9951 / 0.9952, render 3.9 min. **Against the targets:** command → job start was **122 s with the project's
+    42-s self-test, which misses "≤ 1.5 min" by 32 s** (80 s to the self-test); command → MP4 was **6 min 59 s**
+    (13:10:02 → 13:17:01): under 7 min by one second, so the Short target is met only at the edge (baseline 12.6 min).
+    What is left before the job: SSH 36 s, the WebGL check 16 s, the upload 20 s (80.9 MB), the self-test 42 s. The
+    first pod with the image (`o0fstfc6flwuf3`, 5.1 min, ~0.05 USD) never showed public SSH within 300 s; the cause
+    is not proven (most likely the image's first pull on that host). The boot allowance (`RUNPOD_BOOT_SECONDS`,
+    counted once from the pod's creation) is now 600 s.
+  - **e2e 3 (cuda)** with a small probe project (PyTorch 2.1.0+cu118 on the CUDA image; pod `tl8gntu1ld830x`, A40, 3.2
+    min, ~0.032 USD; the RTX 2000 Ada candidate was not available): 6 tasks of 4,000 synchronised 1024×1024 matmuls
+    (latency-bound, like a small inference job) with `cloudmule-par` at 1 / 3 / 6 slots: 21 / 11 / 9 s (each task ~0.6 s
+    of GPU work plus ~2–3 s of CUDA start-up). The watcher works the same for `cuda`: `GPU_USE mean=19% max=100% · VRAM
+    max=1600/46068 MiB · CPU mean=29% of 7.65 vCPUs`, no `GPU_DEGRADED`, and the hint "room for more parallel tasks".
+    Setup: SSH 36 s, modules 55 s (`base` only, apt 29 s through the mirror).
+  - Cost of the implementation's own pods: about 0.75 USD (eleven A40 pods, two of them diagnosis pods stopped in the
     slow apt pass, one that never showed SSH).
 - Written 2026-11-18 from a review between three Claude sessions of the Short Form project (two of them ran the pods
   above), at the owner's request, then extended the same day with the GPU-use and parallel measurements.

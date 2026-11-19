@@ -2,7 +2,8 @@ name: gpu-image
 
 # Builds images/gpu-graphics/Dockerfile (cloudmule's prebuilt image for graphics GPU pods, docs/specs/0005 step b) and
 # pushes it to GitHub Container Registry. On demand only: Actions -> gpu-image -> Run workflow (once this file is on the
-# default branch), or push a tag `gpu-image-<date>` (works from any branch: the tag's commit is built). Rebuild when
+# default branch), or push a tag `gpu-image-<date>[-<n>]` (works from any branch: the tag's commit is built; a second
+# build the same day needs a suffix, e.g. gpu-image-2026-11-19-2). Rebuild when
 # Chrome needs updating or a module changes. The image holds no secrets.
 # Order when modules change (tests/run.sh checks the recorded hash): push the branch, tag it gpu-image-<date>, make
 # sure the package is public (GitHub -> Packages -> cloudmule-gpu-graphics -> Package settings; RunPod pulls without
@@ -70,7 +71,7 @@ jobs:
           {
             echo '```sh'
             echo "RUNPOD_IMAGE_GRAPHICS_DEFAULT=\"$IMAGE@$DIGEST\""
-            echo "RUNPOD_IMAGE_GRAPHICS_SOURCE=$SOURCE"
+            echo "RUNPOD_IMAGE_GRAPHICS_SOURCE=\"$SOURCE\""
             echo '```'
             echo "Before using it: the package must be public (an anonymous pull must work)."
           } >> "$GITHUB_STEP_SUMMARY"

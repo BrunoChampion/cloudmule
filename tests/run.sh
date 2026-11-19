@@ -357,7 +357,7 @@ check "the above-cap pod was deleted" grep -q '^DELETE /v2/pods/fakepod1 ' "$RP/
 check "it reports the GPU and price used" has "GPU pod fakepod2 created: NVIDIA A40, 0.59 USD/h (SECURE)"
 check "the pod is created with the SSH key and the graphics capability, on the default graphics image" \
   bash -c "grep -F '\"PUBLIC_KEY\": \"ssh-ed25519 ' '$RP/requests.log' | grep -F 'NVIDIA_DRIVER_CAPABILITIES\": \"all' \
-    | grep -F 'ghcr.io/brunochampion/cloudmule-gpu-graphics@sha256:' >/dev/null"
+    | grep -F \"\$(sed -n 's/^RUNPOD_IMAGE_GRAPHICS_DEFAULT=\"\([^\"]*\)\".*/\1/p' '$REPO/bin/lib.sh')\" >/dev/null"
 check "the pod carries its own time cap, for any computer's orphan check" grep -qF '"CLOUDMULE_MAX_MINUTES": "40"' "$RP/requests.log"
 check "the pod is named after the project, the job and this run" grep -qE '"name": "cloudmule-gfx-render-[0-9a-f]{6}"' "$RP/requests.log"
 check "the pod guard starts first thing after SSH" bash -c "sed -n 2p '$FAKE_SSH_LOG' | grep -F 'pod-guard.sh' >/dev/null"
@@ -601,7 +601,7 @@ check "a GPU the catalog gives no vCPUs or RAM for: the run's numbers stay in pl
 check "a named GPU the catalog lists as none available is still tried (RunPod decides)" \
   bash -c "grep -F '\"id\": \"NVIDIA RTX A4000\"' '$RP/requests.log' >/dev/null && printf '%s' \"\$1\" | grep 'GPU_OK: render' >/dev/null" _ "$OUT"
 check "graphics pods start from the graphics image setting (RUNPOD_IMAGE_GRAPHICS_DEFAULT)" \
-  bash -c "grep -F '\"image\": \"ghcr.io/brunochampion/cloudmule-gpu-graphics@sha256:' '$RP/requests.log' >/dev/null"
+  bash -c "grep -F \"\$(sed -n 's/^RUNPOD_IMAGE_GRAPHICS_DEFAULT=\"\([^\"]*\)\".*/\1/p' '$REPO/bin/lib.sh')\" '$RP/requests.log' >/dev/null"
 check "pods get Ubuntu's packages from the faster official mirror (RUNPOD_APT_MIRROR)" \
   bash -c "grep -F 'CM_APT_MIRROR=https://mirrors.edge.kernel.org/ubuntu' '$FAKE_SSH_LOG' >/dev/null"
 

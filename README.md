@@ -145,9 +145,9 @@ rm -rf ~/.config/cloudmule <cloudmule-folder>      # and each project's .cloudmu
 - Linux servers only: no iOS builds (they need macOS) and probably no Android emulator (no KVM).
 - One shared server: projects working at the same time share its CPU and RAM.
 - GPU pods: NVIDIA only, RunPod's SECURE cloud only (its COMMUNITY pods have no public SSH), one GPU per pod, and
-  cheap GPUs are often unavailable. Each pod installs Chrome and the project's tools again (3–6 min, depending on
-  how fast Ubuntu's mirror answers RunPod's hosts); `graphics` pods start from a prebuilt image with Chrome, Node
-  and ffmpeg (about 1.5 min from the command to the job).
+  cheap GPUs are often unavailable. `graphics` pods start from a prebuilt image with Chrome, Node and ffmpeg
+  (measured: ~1.3 min from the command to a project's self-test, ~2 min to its job); other pods install their tools
+  each time (3–6 min, depending on how fast Ubuntu's mirror answers RunPod's hosts).
 
 ## Contributing
 
